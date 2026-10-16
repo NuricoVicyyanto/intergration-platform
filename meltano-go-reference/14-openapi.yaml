@@ -1,0 +1,1367 @@
+openapi: 3.1.0
+info:
+  title: Replication Control Plane API
+  version: 0.4.2
+  summary: Control plane untuk sistem replikasi database berbasis Meltano
+  description: |
+    REST API control plane yang membungkus Meltano sebagai execution engine.
+    Semua operasi eksekusi mengembalikan 202 Accepted; hasil dipantau melalui
+    endpoint status, log (SSE), dan webhook.
+
+    Catatan implementasi penting:
+    - Tenant selalu diambil dari bearer token, bukan dari path atau body.
+    - Kredensial koneksi hanya disimpan sebagai `secret_ref`; worker me-resolve
+      nilainya saat spawn. API tidak pernah menerima atau mengembalikan nilai secret.
+    - `POST /v1/pipelines/{pipeline_id}/runs` memerlukan header `Idempotency-Key`.
+    - Field `force` tidak disediakan karena menonaktifkan pengaman tunggal Meltano.
+  license:
+    name: Internal
+servers:
+  - url: https://api.example.com
+    description: Production
+  - url: http://localhost:8080
+    description: Local
+tags:
+  - name: meta
+  - name: tenants
+  - name: connections
+  - name: pipelines
+  - name: runs
+  - name: webhooks
+security:
+  - bearerAuth: []
+paths:
+  /healthz:
+    get:
+      tags: [meta]
+      summary: Liveness probe
+      operationId: getHealthz
+      security: []
+      responses:
+        "200":
+          description: Proses hidup
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    const: ok
+  /readyz:
+    get:
+      tags: [meta]
+      summary: Readiness probe
+      operationId: getReadyz
+      security: []
+      responses:
+        "200":
+          description: Siap menerima pekerjaan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyReport"
+        "503":
+          description: Belum siap
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyReport"
+  /v1/version:
+    get:
+      tags: [meta]
+      summary: Versi control plane dan Meltano
+      operationId: getVersion
+      responses:
+        "200":
+          description: Informasi versi
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VersionInfo"
+  /v1/tenants:
+    get:
+      tags: [tenants]
+      summary: Daftar tenant
+      operationId: listTenants
+      security:
+        - bearerAuth: [pipelines:read]
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Daftar tenant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [tenants]
+      summary: Buat tenant
+      description: Memicu provisioning direktori project Meltano untuk tenant.
+      operationId: createTenant
+      security:
+        - bearerAuth: [admin]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantCreate"
+      responses:
+        "201":
+          description: Tenant dibuat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /v1/tenants/{tenant_id}:
+    parameters:
+      - $ref: "#/components/parameters/TenantId"
+    get:
+      tags: [tenants]
+      summary: Detail tenant
+      operationId: getTenant
+      security:
+        - bearerAuth: [pipelines:read]
+      responses:
+        "200":
+          description: Detail tenant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [tenants]
+      summary: Ubah tenant
+      operationId: patchTenant
+      security:
+        - bearerAuth: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantPatch"
+      responses:
+        "200":
+          description: Tenant diperbarui
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+    delete:
+      tags: [tenants]
+      summary: Hapus tenant
+      operationId: deleteTenant
+      security:
+        - bearerAuth: [admin]
+      responses:
+        "204":
+          description: Tenant dihapus
+        "409":
+          description: Masih ada run aktif pada tenant
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /v1/connections:
+    get:
+      tags: [connections]
+      summary: Daftar koneksi
+      operationId: listConnections
+      security:
+        - bearerAuth: [pipelines:read]
+      parameters:
+        - name: kind
+          in: query
+          schema:
+            $ref: "#/components/schemas/ConnectionKind"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Daftar koneksi
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectionList"
+    post:
+      tags: [connections]
+      summary: Daftarkan koneksi
+      description: |
+        Kredensial tidak dikirim ke API. Gunakan `secret_ref` ke secret manager;
+        worker me-resolve nilainya saat spawn.
+      operationId: createConnection
+      security:
+        - bearerAuth: [pipelines:write]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectionCreate"
+      responses:
+        "201":
+          description: Koneksi dibuat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Connection"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+  /v1/connections/{connection_id}:
+    parameters:
+      - $ref: "#/components/parameters/ConnectionId"
+    get:
+      tags: [connections]
+      summary: Detail koneksi
+      operationId: getConnection
+      security:
+        - bearerAuth: [pipelines:read]
+      responses:
+        "200":
+          description: Detail koneksi
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Connection"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [connections]
+      summary: Ubah koneksi
+      operationId: patchConnection
+      security:
+        - bearerAuth: [pipelines:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectionPatch"
+      responses:
+        "200":
+          description: Koneksi diperbarui
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Connection"
+    delete:
+      tags: [connections]
+      summary: Hapus koneksi
+      operationId: deleteConnection
+      security:
+        - bearerAuth: [pipelines:write]
+      responses:
+        "204":
+          description: Koneksi dihapus
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /v1/connections/{connection_id}/test:
+    parameters:
+      - $ref: "#/components/parameters/ConnectionId"
+    post:
+      tags: [connections]
+      summary: Uji konektivitas
+      operationId: testConnection
+      security:
+        - bearerAuth: [pipelines:write]
+      responses:
+        "200":
+          description: Hasil uji
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectionTestResult"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /v1/pipelines:
+    get:
+      tags: [pipelines]
+      summary: Daftar pipeline
+      operationId: listPipelines
+      security:
+        - bearerAuth: [pipelines:read]
+      parameters:
+        - name: enabled
+          in: query
+          schema:
+            type: boolean
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Daftar pipeline
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PipelineList"
+    post:
+      tags: [pipelines]
+      summary: Buat pipeline
+      description: |
+        Tidak memanggil Meltano. Definisi pipeline hidup di database control plane;
+        `meltano.yml` hanya memuat katalog plugin dan environment.
+      operationId: createPipeline
+      security:
+        - bearerAuth: [pipelines:write]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PipelineCreate"
+      responses:
+        "201":
+          description: Pipeline dibuat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Pipeline"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+  /v1/pipelines/{pipeline_id}:
+    parameters:
+      - $ref: "#/components/parameters/PipelineId"
+    get:
+      tags: [pipelines]
+      summary: Detail pipeline
+      operationId: getPipeline
+      security:
+        - bearerAuth: [pipelines:read]
+      responses:
+        "200":
+          description: Detail pipeline
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Pipeline"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [pipelines]
+      summary: Ubah pipeline
+      operationId: patchPipeline
+      security:
+        - bearerAuth: [pipelines:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PipelinePatch"
+      responses:
+        "200":
+          description: Pipeline diperbarui
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Pipeline"
+    delete:
+      tags: [pipelines]
+      summary: Hapus pipeline
+      operationId: deletePipeline
+      security:
+        - bearerAuth: [pipelines:write]
+      responses:
+        "204":
+          description: Pipeline dihapus
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /v1/pipelines/{pipeline_id}/validate:
+    parameters:
+      - $ref: "#/components/parameters/PipelineId"
+    post:
+      tags: [pipelines]
+      summary: Validasi pipeline tanpa eksekusi
+      description: Memetakan ke `meltano ... run --dry-run --no-install`.
+      operationId: validatePipeline
+      security:
+        - bearerAuth: [runs:execute]
+      responses:
+        "200":
+          description: Hasil validasi
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationResult"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+  /v1/pipelines/{pipeline_id}/state:
+    parameters:
+      - $ref: "#/components/parameters/PipelineId"
+    get:
+      tags: [pipelines]
+      summary: State Singer saat ini
+      operationId: getPipelineState
+      security:
+        - bearerAuth: [state:read]
+      responses:
+        "200":
+          description: State pipeline
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StateDocument"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [pipelines]
+      summary: Timpa state pipeline
+      description: Operasi berbahaya; memetakan ke `meltano state set`.
+      operationId: putPipelineState
+      security:
+        - bearerAuth: [state:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StateWriteRequest"
+      responses:
+        "200":
+          description: State diperbarui
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StateDocument"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+    delete:
+      tags: [pipelines]
+      summary: Reset state pipeline
+      description: |
+        Destruktif. Memetakan ke `meltano state clear`. Memerlukan header
+        `X-Confirm-Destructive` berisi pipeline_id dan scope `state:write`.
+      operationId: deletePipelineState
+      security:
+        - bearerAuth: [state:write]
+      parameters:
+        - name: X-Confirm-Destructive
+          in: header
+          required: true
+          schema:
+            type: string
+          description: Harus berisi pipeline_id yang sama.
+      responses:
+        "204":
+          description: State direset
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /v1/pipelines/{pipeline_id}/runs:
+    parameters:
+      - $ref: "#/components/parameters/PipelineId"
+    post:
+      tags: [runs]
+      summary: Mulai run baru
+      description: |
+        Mengembalikan 202 dan membuat baris run berstatus `queued`.
+        Mengembalikan 409 bila pipeline sudah punya run aktif.
+        Memetakan ke spawn `meltano --environment=E run <extractor> <loader>`.
+      operationId: createRun
+      security:
+        - bearerAuth: [runs:execute]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKeyRequired"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RunCreateRequest"
+      responses:
+        "202":
+          description: Run diterima
+          headers:
+            Location:
+              schema:
+                type: string
+              description: URL run yang dibuat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Run"
+        "409":
+          description: Pipeline sudah punya run aktif
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /v1/runs:
+    get:
+      tags: [runs]
+      summary: Daftar run
+      operationId: listRuns
+      security:
+        - bearerAuth: [runs:read]
+      parameters:
+        - name: pipeline_id
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/RunStatus"
+        - name: trigger
+          in: query
+          schema:
+            type: string
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Daftar run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunList"
+  /v1/runs/{run_id}:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    get:
+      tags: [runs]
+      summary: Detail run
+      operationId: getRun
+      security:
+        - bearerAuth: [runs:read]
+      responses:
+        "200":
+          description: Detail run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Run"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/runs/{run_id}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    post:
+      tags: [runs]
+      summary: Batalkan run
+      description: |
+        Idempoten. Mengirim SIGTERM ke proses group; Meltano melakukan graceful
+        shutdown dan keluar dengan exit code 143.
+      operationId: cancelRun
+      security:
+        - bearerAuth: [runs:cancel]
+      responses:
+        "202":
+          description: Permintaan pembatalan diterima
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    $ref: "#/components/schemas/RunStatus"
+                  cancel_requested_at:
+                    type: string
+                    format: date-time
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/runs/{run_id}/retry:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    post:
+      tags: [runs]
+      summary: Coba ulang run
+      description: |
+        Membuat run BARU yang merujuk run lama melalui `retried_from`.
+        Meltano akan melanjutkan dari checkpoint terakhir karena state sudah tersimpan.
+      operationId: retryRun
+      security:
+        - bearerAuth: [runs:execute]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKeyRequired"
+      responses:
+        "202":
+          description: Run baru dibuat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Run"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /v1/runs/{run_id}/logs:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    get:
+      tags: [runs]
+      summary: Log run
+      description: |
+        `follow=false` mengembalikan teks dari file log per run.
+        `follow=true` mengembalikan Server-Sent Events.
+      operationId: getRunLogs
+      security:
+        - bearerAuth: [runs:read]
+      parameters:
+        - name: follow
+          in: query
+          schema:
+            type: boolean
+            default: false
+        - name: tail
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 10000
+      responses:
+        "200":
+          description: Isi log
+          content:
+            text/plain:
+              schema:
+                type: string
+            text/event-stream:
+              schema:
+                type: string
+                description: |
+                  Event `log`, `checkpoint`, `phase`, `end`, dan `heartbeat`.
+                  Klien dapat mengirim Last-Event-ID berisi offset byte.
+        "404":
+          description: Log tidak ditemukan (sudah dibersihkan)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /v1/runs/{run_id}/events:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    get:
+      tags: [runs]
+      summary: Event terstruktur run
+      operationId: listRunEvents
+      security:
+        - bearerAuth: [runs:read]
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Daftar event
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunEventList"
+  /v1/runs/{run_id}/state:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    get:
+      tags: [runs]
+      summary: Snapshot state pada saat run itu
+      operationId: getRunState
+      security:
+        - bearerAuth: [runs:read]
+      responses:
+        "200":
+          description: State run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StateDocument"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/webhook_endpoints:
+    get:
+      tags: [webhooks]
+      summary: Daftar webhook endpoint
+      operationId: listWebhookEndpoints
+      security:
+        - bearerAuth: [admin]
+      responses:
+        "200":
+          description: Daftar endpoint
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookEndpointList"
+    post:
+      tags: [webhooks]
+      summary: Daftarkan webhook endpoint
+      operationId: createWebhookEndpoint
+      security:
+        - bearerAuth: [admin]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookEndpointCreate"
+      responses:
+        "201":
+          description: Endpoint dibuat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookEndpoint"
+  /v1/webhook_endpoints/{webhook_id}:
+    parameters:
+      - name: webhook_id
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [webhooks]
+      summary: Hapus webhook endpoint
+      operationId: deleteWebhookEndpoint
+      security:
+        - bearerAuth: [admin]
+      responses:
+        "204":
+          description: Endpoint dihapus
+        "404":
+          $ref: "#/components/responses/NotFound"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Token memetakan ke { tenant_id, scopes }. Tenant selalu diambil dari token.
+  parameters:
+    Cursor:
+      name: cursor
+      in: query
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        default: 50
+        minimum: 1
+        maximum: 200
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema:
+        type: string
+    IdempotencyKeyRequired:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+      description: Wajib. Retensi 24 jam; key sama dengan body berbeda menghasilkan 409.
+    TenantId:
+      name: tenant_id
+      in: path
+      required: true
+      schema:
+        type: string
+    ConnectionId:
+      name: connection_id
+      in: path
+      required: true
+      schema:
+        type: string
+    PipelineId:
+      name: pipeline_id
+      in: path
+      required: true
+      schema:
+        type: string
+    RunId:
+      name: run_id
+      in: path
+      required: true
+      schema:
+        type: string
+  responses:
+    BadRequest:
+      description: Body malformed
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Unauthorized:
+      description: Token absen atau tidak valid
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Forbidden:
+      description: Scope tidak mencukupi
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    NotFound:
+      description: Resource tidak ada pada tenant token
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Conflict:
+      description: Konflik status
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Unprocessable:
+      description: Secara sintaks valid tetapi ditolak secara semantik
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    ServiceUnavailable:
+      description: Dependensi tidak siap
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+        active_run_id:
+          type: string
+      additionalProperties: true
+    VersionInfo:
+      type: object
+      required: [control_plane, meltano, api_version]
+      properties:
+        control_plane:
+          type: string
+        meltano:
+          type: string
+        meltano_commit:
+          type: string
+        api_version:
+          type: string
+    ReadyReport:
+      type: object
+      required: [ready, checks]
+      properties:
+        ready:
+          type: boolean
+        checks:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              ok:
+                type: boolean
+              latency_ms:
+                type: integer
+              error:
+                type: string
+              pending:
+                type: integer
+              alive:
+                type: integer
+              capacity:
+                type: integer
+    ConnectionKind:
+      type: string
+      enum: [source, destination]
+    ConnectionDriver:
+      type: string
+      enum: [postgres, mysql, mssql, oracle]
+    RunStatus:
+      type: string
+      enum: [queued, running, cancelling, succeeded, failed, cancelled, timed_out, lost]
+    Tenant:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        display_name:
+          type: string
+        environment_name:
+          type: string
+          description: Komponen pertama state_id.
+        project_dir:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    TenantCreate:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        display_name:
+          type: string
+        environment_name:
+          type: string
+    TenantPatch:
+      type: object
+      properties:
+        display_name:
+          type: string
+    TenantList:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Tenant"
+        next_cursor:
+          type: string
+          nullable: true
+        has_more:
+          type: boolean
+    Connection:
+      type: object
+      required: [id, name, kind, driver]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        kind:
+          $ref: "#/components/schemas/ConnectionKind"
+        driver:
+          $ref: "#/components/schemas/ConnectionDriver"
+        endpoint:
+          type: object
+          additionalProperties: true
+        username:
+          type: string
+        secret_ref:
+          type: string
+          description: Referensi ke secret manager. Nilai secret tidak pernah diterima atau dikembalikan.
+        created_at:
+          type: string
+          format: date-time
+    ConnectionCreate:
+      type: object
+      required: [name, kind, driver, endpoint, secret_ref]
+      properties:
+        name:
+          type: string
+        kind:
+          $ref: "#/components/schemas/ConnectionKind"
+        driver:
+          $ref: "#/components/schemas/ConnectionDriver"
+        endpoint:
+          type: object
+          additionalProperties: true
+        username:
+          type: string
+        secret_ref:
+          type: string
+        options:
+          type: object
+          additionalProperties: true
+    ConnectionPatch:
+      type: object
+      properties:
+        endpoint:
+          type: object
+          additionalProperties: true
+        username:
+          type: string
+        secret_ref:
+          type: string
+        options:
+          type: object
+          additionalProperties: true
+    ConnectionTestResult:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+        latency_ms:
+          type: integer
+        server_version:
+          type: string
+        checked_at:
+          type: string
+          format: date-time
+        error:
+          type: string
+    ConnectionList:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Connection"
+        next_cursor:
+          type: string
+          nullable: true
+        has_more:
+          type: boolean
+    Pipeline:
+      type: object
+      required: [id, name, extractor, loader]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        extractor:
+          type: string
+        loader:
+          type: string
+        source_connection_id:
+          type: string
+        destination_connection_id:
+          type: string
+        state_id_suffix:
+          type: string
+          nullable: true
+        default_timeout_seconds:
+          type: integer
+        max_attempts:
+          type: integer
+        active_run_id:
+          type: string
+          nullable: true
+        enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    PipelineCreate:
+      type: object
+      required: [name, extractor, loader, source_connection_id, destination_connection_id]
+      properties:
+        name:
+          type: string
+        extractor:
+          type: string
+        loader:
+          type: string
+        source_connection_id:
+          type: string
+        destination_connection_id:
+          type: string
+        state_id_suffix:
+          type: string
+          nullable: true
+          description: Tidak boleh mengandung ':' (menghasilkan 422).
+        default_timeout_seconds:
+          type: integer
+          default: 3600
+        max_attempts:
+          type: integer
+          default: 3
+        enabled:
+          type: boolean
+          default: true
+        schedule:
+          type: object
+          properties:
+            cron:
+              type: string
+            enabled:
+              type: boolean
+    PipelinePatch:
+      type: object
+      properties:
+        name:
+          type: string
+        state_id_suffix:
+          type: string
+          nullable: true
+        default_timeout_seconds:
+          type: integer
+        max_attempts:
+          type: integer
+        enabled:
+          type: boolean
+    PipelineList:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Pipeline"
+        next_cursor:
+          type: string
+          nullable: true
+        has_more:
+          type: boolean
+    ValidationResult:
+      type: object
+      required: [valid]
+      properties:
+        valid:
+          type: boolean
+        resolved_state_id:
+          type: string
+        checks:
+          type: array
+          items:
+            type: object
+            required: [name, ok]
+            properties:
+              name:
+                type: string
+              ok:
+                type: boolean
+              detail:
+                type: string
+    StateDocument:
+      type: object
+      properties:
+        pipeline_id:
+          type: string
+        state_id:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+        completed:
+          type: object
+          additionalProperties: true
+          description: State final. Bentuk mengikuti MeltanoState.to_dict().
+        partial:
+          type: object
+          additionalProperties: true
+          description: State sementara yang belum lengkap.
+    StateWriteRequest:
+      type: object
+      properties:
+        completed:
+          type: object
+          additionalProperties: true
+        partial:
+          type: object
+          additionalProperties: true
+    MeltanoRunInfo:
+      type: object
+      properties:
+        environment:
+          type: string
+        extractor:
+          type: string
+        loader:
+          type: string
+        state_id:
+          type: string
+          description: Dihitung control plane dengan formula generate_state_id Meltano.
+        run_id:
+          type: string
+        project_dir:
+          type: string
+    RunProgress:
+      type: object
+      properties:
+        last_checkpoint_at:
+          type: string
+          format: date-time
+          nullable: true
+        state_age_seconds:
+          type: integer
+          nullable: true
+        log_bytes:
+          type: integer
+    Run:
+      type: object
+      required: [id, pipeline_id, status]
+      properties:
+        id:
+          type: string
+          description: Dipakai sebagai --run-id dan MELTANO_JOB_TRIGGER.
+        pipeline_id:
+          type: string
+        status:
+          $ref: "#/components/schemas/RunStatus"
+        attempt:
+          type: integer
+        auto_attempts:
+          type: integer
+        retried_from:
+          type: string
+          nullable: true
+        exit_code:
+          type: integer
+          nullable: true
+        error:
+          type: string
+          nullable: true
+        trigger:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        ended_at:
+          type: string
+          format: date-time
+          nullable: true
+        duration_seconds:
+          type: number
+          nullable: true
+        progress:
+          $ref: "#/components/schemas/RunProgress"
+        meltano:
+          $ref: "#/components/schemas/MeltanoRunInfo"
+    RunCreateRequest:
+      type: object
+      properties:
+        full_refresh:
+          type: boolean
+          default: false
+        refresh_catalog:
+          type: boolean
+          default: false
+        state_id_suffix:
+          type: string
+          nullable: true
+        timeout_seconds:
+          type: integer
+          minimum: 1
+        trigger:
+          type: string
+          default: manual
+        reason:
+          type: string
+          description: Hanya untuk audit log.
+    RunList:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Run"
+        next_cursor:
+          type: string
+          nullable: true
+        has_more:
+          type: boolean
+    RunEvent:
+      type: object
+      required: [at, kind, payload]
+      properties:
+        at:
+          type: string
+          format: date-time
+        kind:
+          type: string
+          enum: [phase, state_checkpoint, log_line, error]
+        payload:
+          type: object
+          additionalProperties: true
+    RunEventList:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/RunEvent"
+        next_cursor:
+          type: string
+          nullable: true
+        has_more:
+          type: boolean
+    WebhookEndpoint:
+      type: object
+      required: [id, url, events]
+      properties:
+        id:
+          type: string
+        url:
+          type: string
+          format: uri
+        events:
+          type: array
+          items:
+            type: string
+            enum: [run.succeeded, run.failed, run.cancelled, run.timed_out, run.lost]
+        secret_ref:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    WebhookEndpointCreate:
+      type: object
+      required: [url, events, secret_ref]
+      properties:
+        url:
+          type: string
+          format: uri
+        events:
+          type: array
+          items:
+            type: string
+            enum: [run.succeeded, run.failed, run.cancelled, run.timed_out, run.lost]
+        secret_ref:
+          type: string
+    WebhookEndpointList:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/WebhookEndpoint"

@@ -1,0 +1,15 @@
+# binary
+/bin/
+*.exe
+
+# env
+.env
+
+# editor
+.idea/
+.vscode/
+
+# runtime
+*.log
+/tmp/
+.cache*.log

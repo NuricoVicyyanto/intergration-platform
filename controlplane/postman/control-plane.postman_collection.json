@@ -1,0 +1,353 @@
+{
+  "info": {
+    "_postman_id": "b7f1c4a2-0e5d-4c31-9a77-1d2e3f4a5b60",
+    "name": "Replication Control Plane (Go + Meltano)",
+    "description": "Collection untuk control plane di `controlplane/`. Urutan folder sudah benar: jalankan dari atas ke bawah, atau pakai Collection Runner. ID otomatis tersimpan ke variable sehingga request berikutnya tidak perlu diedit manual.\n\nPrasyarat:\n- Control plane jalan: `CP_EMBEDDED_WORKER=true go run ./cmd/control-plane`\n- Untuk yang ingin menjalankan Meltano sungguhan, set juga `CP_MELTANO_BIN` dan `CP_TENANTS_ROOT`, dan buat tenant yang namanya sama dengan direktori project Meltano.\n\nCatatan: `POST /runs` mengembalikan 409 bila pipeline sudah punya run aktif.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "noauth"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Idempotency-Key baru untuk setiap request, mengikuti format UUID v4.",
+          "pm.variables.set('idempotencyKey', 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {",
+          "    var r = Math.random() * 16 | 0;",
+          "    var v = c === 'x' ? r : (r & 0x3 | 0x8);",
+          "    return v.toString(16);",
+          "}));"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080" },
+    { "key": "idempotencyKey", "value": "" },
+    { "key": "tenantName", "value": "acme" },
+    { "key": "environmentName", "value": "acme" },
+    { "key": "extractorName", "value": "tap-postgres" },
+    { "key": "loaderName", "value": "target-postgres" },
+    { "key": "tenantId", "value": "" },
+    { "key": "sourceConnectionId", "value": "" },
+    { "key": "destinationConnectionId", "value": "" },
+    { "key": "pipelineId", "value": "" },
+    { "key": "runId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "0 - Meta",
+      "item": [
+        {
+          "name": "Health",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/healthz", "host": ["{{baseUrl}}"], "path": ["healthz"] } },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "type": "text/javascript", "exec": ["pm.test('200 OK', function () { pm.response.to.have.status(200); });"] }
+            }
+          ]
+        },
+        {
+          "name": "Ready",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/readyz", "host": ["{{baseUrl}}"], "path": ["readyz"] } }
+        },
+        {
+          "name": "Version",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/v1/version", "host": ["{{baseUrl}}"], "path": ["v1", "version"] } },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const j = pm.response.json();",
+                  "console.log('control_plane=' + j.control_plane + ' meltano=' + j.meltano);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "1 - Tenant",
+      "item": [
+        {
+          "name": "Create tenant",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{tenantName}}\",\n  \"environment_name\": \"{{environmentName}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/v1/tenants", "host": ["{{baseUrl}}"], "path": ["v1", "tenants"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('tenantId', pm.response.json().id);",
+                  "console.log('tenantId = ' + pm.collectionVariables.get('tenantId'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List tenants",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/v1/tenants", "host": ["{{baseUrl}}"], "path": ["v1", "tenants"] } }
+        }
+      ]
+    },
+    {
+      "name": "2 - Connections",
+      "item": [
+        {
+          "name": "Create source connection",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tenant_id\": \"{{tenantId}}\",\n  \"name\": \"source-postgres\",\n  \"kind\": \"source\",\n  \"driver\": \"postgres\",\n  \"endpoint\": { \"host\": \"db.internal\", \"port\": \"5432\", \"database\": \"orders\" },\n  \"username\": \"replication_ro\",\n  \"secret_ref\": \"vault://kv/data/replication/prod-orders#password\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/v1/connections", "host": ["{{baseUrl}}"], "path": ["v1", "connections"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('sourceConnectionId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create destination connection",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tenant_id\": \"{{tenantId}}\",\n  \"name\": \"destination-postgres\",\n  \"kind\": \"destination\",\n  \"driver\": \"postgres\",\n  \"endpoint\": { \"host\": \"dwh.internal\", \"port\": \"5432\", \"database\": \"dwh\" },\n  \"username\": \"loader\",\n  \"secret_ref\": \"vault://kv/data/replication/dwh#password\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/v1/connections", "host": ["{{baseUrl}}"], "path": ["v1", "connections"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('destinationConnectionId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List connections",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/v1/connections?tenant_id={{tenantId}}", "host": ["{{baseUrl}}"], "path": ["v1", "connections"], "query": [{ "key": "tenant_id", "value": "{{tenantId}}" }] } }
+        }
+      ]
+    },
+    {
+      "name": "3 - Pipeline",
+      "item": [
+        {
+          "name": "Create pipeline",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tenant_id\": \"{{tenantId}}\",\n  \"name\": \"orders-sync\",\n  \"extractor\": \"{{extractorName}}\",\n  \"loader\": \"{{loaderName}}\",\n  \"source_connection_id\": \"{{sourceConnectionId}}\",\n  \"destination_connection_id\": \"{{destinationConnectionId}}\",\n  \"default_timeout_seconds\": 3600,\n  \"max_attempts\": 3\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/v1/pipelines", "host": ["{{baseUrl}}"], "path": ["v1", "pipelines"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('pipelineId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Validate pipeline (tanpa eksekusi)",
+          "request": { "method": "POST", "url": { "raw": "{{baseUrl}}/v1/pipelines/{{pipelineId}}/validate", "host": ["{{baseUrl}}"], "path": ["v1", "pipelines", "{{pipelineId}}", "validate"] } },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "console.log('resolved_state_id = ' + pm.response.json().resolved_state_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get pipeline",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/v1/pipelines/{{pipelineId}}", "host": ["{{baseUrl}}"], "path": ["v1", "pipelines", "{{pipelineId}}"] } }
+        },
+        {
+          "name": "List pipelines",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/v1/pipelines", "host": ["{{baseUrl}}"], "path": ["v1", "pipelines"] } }
+        }
+      ]
+    },
+    {
+      "name": "4 - Run",
+      "item": [
+        {
+          "name": "Start run",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{idempotencyKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"timeout_seconds\": 3600,\n  \"full_refresh\": false,\n  \"trigger\": \"postman\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/v1/pipelines/{{pipelineId}}/runs", "host": ["{{baseUrl}}"], "path": ["v1", "pipelines", "{{pipelineId}}", "runs"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', function () { pm.response.to.have.status(202); });",
+                  "pm.collectionVariables.set('runId', pm.response.json().id);",
+                  "console.log('runId = ' + pm.collectionVariables.get('runId'));",
+                  "console.log('state_id = ' + pm.response.json().meltano_state_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get run",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/v1/runs/{{runId}}", "host": ["{{baseUrl}}"], "path": ["v1", "runs", "{{runId}}"] } },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "console.log('status = ' + pm.response.json().status + ' exit_code = ' + pm.response.json().exit_code);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List runs",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/v1/runs?pipeline_id={{pipelineId}}&limit=50", "host": ["{{baseUrl}}"], "path": ["v1", "runs"], "query": [{ "key": "pipeline_id", "value": "{{pipelineId}}" }, { "key": "limit", "value": "50" }] } }
+        },
+        {
+          "name": "List run events",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/v1/runs/{{runId}}/events", "host": ["{{baseUrl}}"], "path": ["v1", "runs", "{{runId}}", "events"] } }
+        },
+        {
+          "name": "Run kedua saat run pertama masih aktif (harus 409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{idempotencyKey}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"timeout_seconds\": 3600\n}" },
+            "url": { "raw": "{{baseUrl}}/v1/pipelines/{{pipelineId}}/runs", "host": ["{{baseUrl}}"], "path": ["v1", "pipelines", "{{pipelineId}}", "runs"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Conflict karena sudah ada run aktif', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5 - Cancel & Retry",
+      "item": [
+        {
+          "name": "Cancel run",
+          "request": { "method": "POST", "url": { "raw": "{{baseUrl}}/v1/runs/{{runId}}/cancel", "host": ["{{baseUrl}}"], "path": ["v1", "runs", "{{runId}}", "cancel"] } },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "type": "text/javascript", "exec": ["pm.test('202 Accepted', function () { pm.response.to.have.status(202); });"] }
+            }
+          ]
+        },
+        {
+          "name": "Retry run",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Idempotency-Key", "value": "{{idempotencyKey}}" }],
+            "url": { "raw": "{{baseUrl}}/v1/runs/{{runId}}/retry", "host": ["{{baseUrl}}"], "path": ["v1", "runs", "{{runId}}", "retry"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted (run baru dibuat)', function () { pm.response.to.have.status(202); });",
+                  "const j = pm.response.json();",
+                  "pm.collectionVariables.set('runId', j.id);",
+                  "console.log('run baru = ' + j.id + ' retried_from = ' + j.retried_from);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get state pipeline",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/v1/pipelines/{{pipelineId}}/state", "host": ["{{baseUrl}}"], "path": ["v1", "pipelines", "{{pipelineId}}", "state"] } },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('404 atau 200 - endpoint state belum diimplementasikan', function () { pm.expect([200, 404]).to.include(pm.response.code); });"]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
