@@ -147,3 +147,7 @@ test-project/
 
 # Netlify
 .netlify
+
+# Control plane UI components (the generic lib/ rule above is for Python builds)
+!controlplane/ui/src/lib/
+!controlplane/ui/src/lib/**

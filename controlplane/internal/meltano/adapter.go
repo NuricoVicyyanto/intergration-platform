@@ -32,6 +32,25 @@ type Adapter struct {
 	Logger *slog.Logger
 }
 
+// InitProject membuat project Meltano minimal bila direktori tenant belum
+// diprovision. Output CLI tidak dipakai sebagai bagian dari API.
+func (a *Adapter) InitProject(ctx context.Context, projectDir string) error {
+	if strings.TrimSpace(projectDir) == "" {
+		return fmt.Errorf("%w: project directory wajib diisi", domain.ErrInvalid)
+	}
+	bin := a.Bin
+	if bin == "" {
+		bin = "meltano"
+	}
+	cmd := exec.CommandContext(ctx, bin, "init", projectDir, "--no-usage-stats")
+	cmd.Env = provisionEnv()
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("gagal membuat project Meltano %s: %w: %s",
+			projectDir, err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
 // RunRequest adalah satu permintaan eksekusi.
 type RunRequest struct {
 	// ProjectDir adalah cwd proses dan harus berisi meltano.yml.
@@ -51,6 +70,9 @@ type RunRequest struct {
 	ExtraEnv map[string]string
 	// LogTailLines adalah jumlah baris terakhir yang disimpan. Nol berarti 100.
 	LogTailLines int
+	// OnLine dipanggil untuk setiap baris output baru. Dipakai worker untuk
+	// memublikasikan progres sebelum proses selesai.
+	OnLine func(string)
 	// GracePeriod setelah SIGTERM sebelum paksa berhenti. Nol berarti
 	// DefaultGracePeriod.
 	GracePeriod time.Duration
@@ -117,6 +139,7 @@ func (a *Adapter) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	cmd.Env = buildEnv(req)
 
 	tail := newTailBuffer(tailLines)
+	tail.onLine = req.OnLine
 	cmd.Stdout = tail
 	cmd.Stderr = tail
 
@@ -198,11 +221,19 @@ func buildEnv(req RunRequest) []string {
 		if v == "" {
 			return
 		}
+		prefix := k + "="
+		filtered := env[:0]
+		for _, item := range env {
+			if !strings.HasPrefix(item, prefix) {
+				filtered = append(filtered, item)
+			}
+		}
+		env = filtered
 		env = append(env, k+"="+v)
 	}
 
 	// Menghindari UnicodeEncodeError pada konsol Windows (lihat doc 15 bagian 15.3).
-	env = append(env, "PYTHONUTF8=1")
+	set("PYTHONUTF8", "1")
 	// Korelasi run: masuk ke kolom runs.trigger.
 	set("MELTANO_JOB_TRIGGER", trigger)
 	// Job tidak boleh memutasi file project.
@@ -236,10 +267,11 @@ func buildEnv(req RunRequest) []string {
 
 // tailBuffer menyimpan sejumlah baris terakhir output proses tanpa tumbuh tanpa batas.
 type tailBuffer struct {
-	mu    sync.Mutex
-	max   int
-	lines []string
-	rest  []byte
+	mu     sync.Mutex
+	max    int
+	lines  []string
+	rest   []byte
+	onLine func(string)
 }
 
 func newTailBuffer(maxLines int) *tailBuffer {
@@ -248,18 +280,26 @@ func newTailBuffer(maxLines int) *tailBuffer {
 
 func (t *tailBuffer) Write(p []byte) (int, error) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-
 	buf := append(t.rest, p...)
 	t.rest = nil
+	emitted := make([]string, 0)
 	for {
 		i := indexByte(buf, '\n')
 		if i < 0 {
 			t.rest = append([]byte(nil), buf...)
 			break
 		}
-		t.push(strings.TrimRight(string(buf[:i]), "\r"))
+		line := strings.TrimRight(string(buf[:i]), "\r")
+		t.push(line)
+		emitted = append(emitted, line)
 		buf = buf[i+1:]
+	}
+	onLine := t.onLine
+	t.mu.Unlock()
+	if onLine != nil {
+		for _, line := range emitted {
+			onLine(line)
+		}
 	}
 	return len(p), nil
 }

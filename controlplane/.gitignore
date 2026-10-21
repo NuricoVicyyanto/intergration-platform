@@ -13,3 +13,7 @@
 *.log
 /tmp/
 .cache*.log
+
+# frontend
+ui/node_modules/
+ui/dist/

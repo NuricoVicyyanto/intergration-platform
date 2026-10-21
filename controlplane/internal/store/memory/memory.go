@@ -94,6 +94,64 @@ func (s *Store) ListTenants(_ context.Context) ([]domain.Tenant, error) {
 	return out, nil
 }
 
+func (s *Store) UpdateTenant(_ context.Context, t domain.Tenant) (domain.Tenant, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing, ok := s.tenants[t.ID]
+	if !ok {
+		return domain.Tenant{}, fmt.Errorf("%w: tenant %s", domain.ErrNotFound, t.ID)
+	}
+	for id, other := range s.tenants {
+		if id != t.ID && other.Name == t.Name {
+			return domain.Tenant{}, fmt.Errorf("%w: tenant %q sudah ada", domain.ErrConflict, t.Name)
+		}
+	}
+	if existing.CreatedAt.IsZero() {
+		existing.CreatedAt = time.Now().UTC()
+	}
+	t.CreatedAt = existing.CreatedAt
+	s.tenants[t.ID] = t
+	return t, nil
+}
+
+func (s *Store) DeleteTenant(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.tenants[id]; !ok {
+		return fmt.Errorf("%w: tenant %s", domain.ErrNotFound, id)
+	}
+	pipelineIDs := map[string]bool{}
+	for pipelineID, pipeline := range s.pipelines {
+		if pipeline.TenantID == id {
+			pipelineIDs[pipelineID] = true
+		}
+	}
+	for runID, run := range s.runs {
+		if pipelineIDs[run.PipelineID] && run.Status.IsActive() {
+			return fmt.Errorf("%w: tenant %s masih punya run aktif", domain.ErrConflict, id)
+		}
+		if pipelineIDs[run.PipelineID] {
+			delete(s.events, runID)
+			delete(s.runs, runID)
+			for key, mappedRunID := range s.idempotency {
+				if mappedRunID == runID {
+					delete(s.idempotency, key)
+				}
+			}
+		}
+	}
+	for pipelineID := range pipelineIDs {
+		delete(s.pipelines, pipelineID)
+	}
+	for connectionID, connection := range s.connections {
+		if connection.TenantID == id {
+			delete(s.connections, connectionID)
+		}
+	}
+	delete(s.tenants, id)
+	return nil
+}
+
 func (s *Store) CreateConnection(_ context.Context, c domain.Connection) (domain.Connection, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -105,7 +163,7 @@ func (s *Store) CreateConnection(_ context.Context, c domain.Connection) (domain
 			return domain.Connection{}, fmt.Errorf("%w: koneksi %q sudah ada", domain.ErrConflict, c.Name)
 		}
 	}
-	if c.SecretRef == "" {
+	if c.Driver.RequiresDatabaseSecret() && c.SecretRef == "" && c.Password == "" {
 		return domain.Connection{}, fmt.Errorf("%w: secret_ref wajib diisi", domain.ErrInvalid)
 	}
 	if c.ID == "" {
@@ -139,6 +197,45 @@ func (s *Store) ListConnections(_ context.Context, tenantID string) ([]domain.Co
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
 	return out, nil
+}
+
+func (s *Store) UpdateConnection(_ context.Context, c domain.Connection) (domain.Connection, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing, ok := s.connections[c.ID]
+	if !ok {
+		return domain.Connection{}, fmt.Errorf("%w: koneksi %s", domain.ErrNotFound, c.ID)
+	}
+	if _, ok := s.tenants[c.TenantID]; !ok {
+		return domain.Connection{}, fmt.Errorf("%w: tenant %s", domain.ErrNotFound, c.TenantID)
+	}
+	if c.Driver.RequiresDatabaseSecret() && c.SecretRef == "" && c.Password == "" {
+		return domain.Connection{}, fmt.Errorf("%w: secret_ref wajib diisi", domain.ErrInvalid)
+	}
+	for id, other := range s.connections {
+		if id != c.ID && other.TenantID == c.TenantID && other.Name == c.Name {
+			return domain.Connection{}, fmt.Errorf("%w: koneksi %q sudah ada", domain.ErrConflict, c.Name)
+		}
+	}
+	c.CreatedAt = existing.CreatedAt
+	s.connections[c.ID] = c
+	return c, nil
+}
+
+func (s *Store) DeleteConnection(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.connections[id]; !ok {
+		return fmt.Errorf("%w: koneksi %s", domain.ErrNotFound, id)
+	}
+	for _, pipeline := range s.pipelines {
+		if pipeline.SourceConnectionID == id || pipeline.DestinationConnectionID == id {
+			return fmt.Errorf("%w: koneksi %s masih dipakai pipeline %s",
+				domain.ErrConflict, id, pipeline.ID)
+		}
+	}
+	delete(s.connections, id)
+	return nil
 }
 
 func (s *Store) CreatePipeline(_ context.Context, p domain.Pipeline) (domain.Pipeline, error) {
@@ -196,6 +293,37 @@ func (s *Store) ListPipelines(_ context.Context, tenantID string) ([]domain.Pipe
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
 	return out, nil
+}
+
+func (s *Store) UpdatePipeline(_ context.Context, p domain.Pipeline) (domain.Pipeline, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing, ok := s.pipelines[p.ID]
+	if !ok {
+		return domain.Pipeline{}, fmt.Errorf("%w: pipeline %s", domain.ErrNotFound, p.ID)
+	}
+	if _, ok := s.tenants[p.TenantID]; !ok {
+		return domain.Pipeline{}, fmt.Errorf("%w: tenant %s", domain.ErrNotFound, p.TenantID)
+	}
+	if p.StateIDSuffix != nil && containsColon(*p.StateIDSuffix) {
+		return domain.Pipeline{}, fmt.Errorf(
+			"%w: state_id_suffix tidak boleh mengandung ':'", domain.ErrInvalid)
+	}
+	for id, other := range s.pipelines {
+		if id != p.ID && other.TenantID == p.TenantID && other.Name == p.Name {
+			return domain.Pipeline{}, fmt.Errorf("%w: pipeline %q sudah ada", domain.ErrConflict, p.Name)
+		}
+	}
+	for _, run := range s.runs {
+		if run.PipelineID == p.ID && run.Status.IsActive() {
+			return domain.Pipeline{}, fmt.Errorf("%w: pipeline %s masih punya run aktif",
+				domain.ErrConflict, p.ID)
+		}
+	}
+	p.CreatedAt = existing.CreatedAt
+	p.UpdatedAt = time.Now().UTC()
+	s.pipelines[p.ID] = p
+	return p, nil
 }
 
 func (s *Store) DeletePipeline(_ context.Context, id string) error {

@@ -13,7 +13,7 @@ import (
 	"github.com/example/controlplane/internal/config"
 	"github.com/example/controlplane/internal/meltano"
 	"github.com/example/controlplane/internal/obs"
-	"github.com/example/controlplane/internal/store/memory"
+	"github.com/example/controlplane/internal/storefactory"
 	"github.com/example/controlplane/internal/worker"
 )
 
@@ -32,9 +32,16 @@ func run() error {
 	log := obs.NewLogger(cfg.LogLevel)
 	slog.SetDefault(log)
 
-	// Store Postgres belum diimplementasikan. Worker dengan store in-memory
-	// hanya berguna untuk pengembangan; produksi memerlukan store bersama.
-	st := memory.New()
+	// Worker dan API harus menunjuk database yang sama supaya antrean job
+	// benar-benar dibagi; itulah alasan CP_DATABASE_URL wajib diisi.
+	openCtx, cancelOpen := context.WithTimeout(context.Background(), 30*time.Second)
+	st, err := storefactory.Open(openCtx, cfg.DatabaseURL, cfg.AutoMigrate)
+	cancelOpen()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = storefactory.Close(st) }()
+	log.Info("store siap", slog.String("backend", storefactory.Backend(cfg.DatabaseURL)))
 
 	hostname, _ := os.Hostname()
 	workerID := hostname + "-" + strconv.Itoa(os.Getpid())
@@ -50,12 +57,18 @@ func run() error {
 		},
 		Store:   st,
 		Adapter: &meltano.Adapter{Bin: cfg.MeltanoBin, Logger: log},
+		// EnvResolver membaca CP_SECRET_<REF> dari environment proses worker.
+		// Cukup untuk pengembangan; di produksi ganti dengan Vault / Secrets
+		// Manager supaya nilai kredensial tidak hidup di environment worker.
+		Secrets: worker.EnvResolver{},
 		Log:     log,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	log.Warn("worker memakai store in-memory; gunakan implementasi Postgres untuk produksi")
+	if storefactory.IsMemory(cfg.DatabaseURL) {
+		log.Warn("worker memakai store in-memory; API di proses lain tidak akan melihat job ini")
+	}
 	return w.Run(ctx)
 }

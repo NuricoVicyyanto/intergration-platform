@@ -17,7 +17,7 @@ import (
 	"github.com/example/controlplane/internal/config"
 	"github.com/example/controlplane/internal/meltano"
 	"github.com/example/controlplane/internal/obs"
-	"github.com/example/controlplane/internal/store/memory"
+	"github.com/example/controlplane/internal/storefactory"
 	"github.com/example/controlplane/internal/worker"
 )
 
@@ -36,11 +36,22 @@ func run() error {
 	log := obs.NewLogger(cfg.LogLevel)
 	slog.SetDefault(log)
 
-	// Store Postgres belum diimplementasikan; in-memory dipakai untuk
-	// menjalankan API tanpa database (lihat README).
-	st := memory.New()
+	// Store dipilih dari CP_DATABASE_URL: DSN Postgres (default) atau
+	// "memory://" untuk demo tanpa database. Skema dijalankan otomatis kecuali
+	// CP_AUTO_MIGRATE=false.
+	openCtx, cancelOpen := context.WithTimeout(context.Background(), 30*time.Second)
+	st, err := storefactory.Open(openCtx, cfg.DatabaseURL, cfg.AutoMigrate)
+	cancelOpen()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = storefactory.Close(st) }()
+	log.Info("store siap", slog.String("backend", storefactory.Backend(cfg.DatabaseURL)))
 
-	srv := api.New(st, log, detectMeltanoVersion(cfg.MeltanoBin))
+	adapter := &meltano.Adapter{Bin: cfg.MeltanoBin, Logger: log}
+	srv := api.New(st, log, detectMeltanoVersion(cfg.MeltanoBin),
+		api.WithConnectorLister(adapter, cfg.TenantsRoot),
+		api.WithPlaintextSecrets(cfg.AllowPlaintextSecrets))
 
 	httpSrv := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -70,11 +81,11 @@ func run() error {
 				LogTailLines: cfg.LogTailLines,
 			},
 			Store:   st,
-			Adapter: &meltano.Adapter{Bin: cfg.MeltanoBin, Logger: log},
+			Adapter: adapter,
 			Secrets: worker.EnvResolver{},
 			Log:     log,
 		}
-		log.Warn("worker tertanam aktif (demo); produksi memakai store Postgres + cmd/worker")
+		log.Warn("worker tertanam aktif di proses API; untuk produksi jalankan cmd/worker terpisah")
 		go func() {
 			if err := w.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				log.Error("worker tertanam berhenti", slog.Any("error", err))

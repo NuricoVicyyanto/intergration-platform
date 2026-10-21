@@ -11,6 +11,10 @@ Rancangan lengkapnya ada di direktori sebelah, `../meltano-go-reference/`:
 | `14-api-reference.md` + `14-openapi.yaml` | referensi API + spesifikasi OpenAPI 3.1 |
 | `15-menjalankan-meltano.md` | panduan operasional menjalankan Meltano |
 | `16-cara-menjalankan-meltano-golang.md` | **runbook end-to-end: API -> worker -> Meltano** |
+| [`docs/menambah-konektor.md`](docs/menambah-konektor.md) | cara menambah driver / konektor baru |
+| [`docs/source-selection-dan-row-filter.md`](docs/source-selection-dan-row-filter.md) | cara memilih tabel/stream dan memfilter record pada pipeline |
+| [`docs/copy-postgres-schema-gateway-log.md`](docs/copy-postgres-schema-gateway-log.md) | contoh copy PostgreSQL dari schema `gateway_log` |
+| [`docs/connection-types.md`](docs/connection-types.md) | referensi field dan contoh semua tipe connection |
 
 Untuk mencoba sekarang juga: ikuti **[bagian 16](../meltano-go-reference/16-cara-menjalankan-meltano-golang.md)**
 dan impor **[Postman collection](postman/control-plane.postman_collection.json)** (20 request, 6 folder,
@@ -34,6 +38,7 @@ ID tersimpan otomatis ke variable).
 controlplane/
 ├── cmd/
 │   ├── control-plane/     # binary HTTP API
+│   ├── provision/         # provisioning project + plugin tenant
 │   └── worker/            # binary worker eksekusi
 ├── internal/
 │   ├── api/               # router net/http + RFC 7807 problem+json
@@ -81,6 +86,41 @@ go run ./cmd/control-plane
 go run ./cmd/worker
 ```
 
+UI Svelte tersedia di `ui/` dan memakai proxy Vite ke API pada `http://localhost:8080`:
+
+```bash
+cd ui
+npm install
+npm run dev
+```
+
+Buka `http://localhost:5173`. Jalankan API lebih dulu dengan `memory://` untuk demo lokal tanpa
+Postgres (`CP_DATABASE_URL=memory://`, atau sesuaikan `.env`). UI memakai endpoint v1 yang sama
+dengan Postman collection: tenant, connections, connectors, pipelines, runs, dan health checks.
+Workspace, connection, dan pipeline dapat dibuat, diedit, dan dihapus langsung dari UI. Run tetap
+immutable karena merupakan riwayat eksekusi. Halaman memakai deep link `#overview`, `#pipelines`,
+`#connections`, dan `#connectors`. Logo PostgreSQL, MySQL, SQL Server, dan Oracle berasal dari aset
+brand Devicon.
+
+Jika API tidak berjalan di port `8080`, arahkan proxy Vite saat start:
+
+```bash
+CP_API_PROXY=http://127.0.0.1:18082 npm run dev
+```
+
+Saat menambahkan koneksi PostgreSQL dengan password dari UI, control plane melakukan ping dan
+autentikasi terlebih dahulu. Edit koneksi boleh tidak mengirim password untuk mempertahankan secret
+yang sudah ada.
+
+Untuk demo lokal, UI menyediakan input `Password`. Aktifkan secara eksplisit:
+
+```bash
+CP_DATABASE_URL=memory:// CP_ALLOW_PLAINTEXT_SECRETS=true CP_EMBEDDED_WORKER=true go run ./cmd/control-plane
+```
+
+Mode ini menyimpan password di store control-plane dan **tidak boleh digunakan di production**.
+Default tetap `false`; deployment production harus menggunakan `secret_ref` dan resolver secret manager.
+
 Postgres untuk pengembangan:
 
 ```bash
@@ -112,13 +152,19 @@ make test build
 | `internal/meltano` - `StateID`, `SanitizeFilename`, `BuildArgs`, `Classify`, `Adapter.Run` | selesai + unit test |
 | `internal/domain` - status run, state machine, validasi | selesai |
 | `internal/worker` - klaim, heartbeat, reaper lease, retry otomatis | selesai dengan store in-memory |
-| `internal/api` - 18 endpoint (meta, tenant, connection, pipeline, run, event) | selesai dengan store in-memory |
+| `internal/api` - 27 endpoint (meta, tenant, connection, pipeline, run, event, execution log) | selesai dengan store in-memory dan Postgres |
+| Pipeline source selection (`streams` + Singer `row_filter`) | selesai untuk tap-postgres/mysql/mssql/mongodb; tap-oracle mendukung pemilihan tabel saja |
+| Pipeline performance tuning | batch size, validasi record, dan load strategy per pipeline untuk `target-postgres` |
 | `migrations/0001_init.sql` - skema + index unik satu run aktif per pipeline | selesai |
-| Store Postgres | **belum** |
-| Resolver secret (Vault / AWS Secrets Manager) | **belum** - `DenyAllResolver` menolak semua |
+| Store Postgres | selesai, termasuk klaim job atomik dan migrasi |
+| MongoDB connector | `tap-mongodb` (meltanolabs), `target-mongodb` (hotgluexyz), driver `mongodb` |
+| File/API connectors | `tap-rest-api-msdk`, `tap-csv`, `tap-google-sheets`, `target-s3`, `target-duckdb` |
+| Resolver secret | `EnvResolver` untuk development; Vault/AWS Secrets Manager belum tersedia |
+| Execution log dan progres (`GET /v1/runs/{id}/logs`) | selesai; UI melakukan polling saat run aktif |
+| Stop run dari Overview | queued dibatalkan langsung; running dihentikan melalui context cancellation worker |
 | Streaming log (SSE) | **belum** |
 | Autentikasi dan tenant dari token | **belum** - masih lewat `tenant_id` di body/query |
-| Cakupan OpenAPI doc 14 | sebagian: 18 dari 34 endpoint |
+| Cakupan OpenAPI doc 14 | sebagian: 27 dari 34 endpoint |
 
 ## Cara pakai cepat
 
@@ -141,6 +187,7 @@ curl -sX POST $B/v1/pipelines -H 'Content-Type: application/json' \
   -d '{"tenant_id":"<tenant>","name":"orders-sync",
        "extractor":"tap-postgres","loader":"target-postgres",
        "source_connection_id":"<conn>","destination_connection_id":"<conn>",
+       "source_filter":{"streams":["public-orders"],"row_filter":"status == \"active\""},
        "default_timeout_seconds":3600,"max_attempts":3}'
 
 # validasi tanpa eksekusi - mengembalikan resolved_state_id
@@ -156,27 +203,123 @@ curl -s $B/v1/runs/<run>
 curl -s $B/v1/runs/<run>/events
 curl -sX POST $B/v1/runs/<run>/cancel
 curl -sX POST $B/v1/runs/<run>/retry -H 'Idempotency-Key: <uuid>'
+
+# edit parsial
+curl -sX PATCH $B/v1/connections/<conn> -H 'Content-Type: application/json' \
+  -d '{"name":"orders-primary","username":"replication_reader"}'
+
+curl -sX PATCH $B/v1/pipelines/<pipeline> -H 'Content-Type: application/json' \
+  -d '{"name":"orders-to-warehouse","enabled":false}'
+
+# hapus resource
+curl -sX DELETE $B/v1/pipelines/<pipeline>
+curl -sX DELETE $B/v1/connections/<conn>
+curl -sX DELETE $B/v1/tenants/<tenant>
 ```
+
+Contoh koneksi MongoDB:
+
+```json
+{
+  "tenant_id": "<tenant>",
+  "name": "mongo-source",
+  "kind": "source",
+  "driver": "mongodb",
+  "endpoint": {
+    "host": "mongo.internal",
+    "port": "27017",
+    "database": "app",
+    "auth_source": "admin",
+    "sslmode": "require"
+  },
+  "username": "mongo_reader",
+  "secret_ref": "vault://kv/data/mongo#password"
+}
+```
+
+`source_filter.streams` menerima nama stream Singer yang tepat atau pola glob seperti
+`sales-*`. Kosongkan untuk memindahkan semua stream. `source_filter.row_filter` adalah
+ekspresi stream-map Singer, misalnya `status == "active" and amount >= 100`; filter ini
+diterapkan saat record keluar dari extractor, bukan sebagai push-down SQL ke database.
+`tap-oracle` legacy hanya mendukung pemilihan tabel, belum filter baris.
+
+Pipeline PostgreSQL juga menerima `transfer_options`:
+
+```json
+{
+  "batch_size_rows": 20000,
+  "validate_records": false,
+  "load_method": "append-only"
+}
+```
+
+- `batch_size_rows` menurunkan overhead commit tetapi memakai RAM lebih besar.
+- `validate_records: false` menghilangkan validasi schema per record; gunakan hanya
+  untuk source yang sudah dipercaya.
+- `load_method` dapat mengoverride strategi dari destination connection.
+- Opsi ini hanya berlaku pada pipeline tersebut dan tidak mengubah pipeline lain.
 
 `409 Conflict` dikembalikan bila pipeline sudah punya run aktif. Ini menggantikan
 pengaman advisory Meltano (`JobFinder.latest_running`) dan menjadi alasan field
 `force` sengaja tidak ada di API.
 
+Penghapusan connection juga menghasilkan `409` selama pipeline masih memakainya.
+Workspace/pipeline tidak dapat dihapus selama run masih aktif. Menghapus tenant dari
+control plane tidak menghapus direktori project Meltano di disk.
+
+### PostgreSQL: server A ke server B
+
+Contoh ini memakai Postgres di kedua sisi. Provisioning plugin dilakukan sekali
+per tenant, sebelum pipeline dijalankan:
+
+```bash
+# project berada di CP_TENANTS_ROOT/acme
+go run ./cmd/provision -tenant acme \
+  -extractor tap-postgres -loader target-postgres
+```
+
+Lalu daftarkan dua koneksi dan pipeline. `schema` opsional dan default-nya
+`public`; `sslmode` juga diteruskan ke connector:
+
+```bash
+curl -sX POST $B/v1/connections -H 'Content-Type: application/json' -d '{
+  "tenant_id":"<tenant>","name":"server-a","kind":"source","driver":"postgres",
+  "endpoint":{"host":"server-a.internal","port":"5432","database":"app",
+              "schema":"public","sslmode":"require"},
+  "username":"replication_ro","secret_ref":"server-a-password"}'
+
+curl -sX POST $B/v1/connections -H 'Content-Type: application/json' -d '{
+  "tenant_id":"<tenant>","name":"server-b","kind":"destination","driver":"postgres",
+  "endpoint":{"host":"server-b.internal","port":"5432","database":"app_copy",
+              "schema":"public","sslmode":"require"},
+  "username":"replication_writer","secret_ref":"server-b-password"}'
+```
+
+Worker menyusun `sqlalchemy_url` dengan escaping aman, memakai
+`postgresql://` untuk tap dan `postgresql+psycopg://` untuk target, serta
+default `load_method=upsert`. Dengan begitu run berulang memperbarui baris
+berdasarkan primary key dan tidak sekadar menambah duplikat. Tabel sumber
+sebaiknya memiliki primary key. Untuk mengubah perilaku load, kirim
+`options.load_method` pada koneksi tujuan (`append-only`, `upsert`, atau
+`overwrite`).
+
+Ini adalah replikasi tabel secara **logis** melalui Singer/Meltano, bukan clone
+fisik database. Primary key, index, trigger, sequence, view, function, dan data
+yang tidak dipilih tidak otomatis dipindahkan. Untuk clone/restore persis,
+gunakan `pg_dump`/`pg_restore`; gunakan pipeline ini untuk sinkronisasi tabel
+yang berulang.
+
 ## Berikutnya, berurutan
 
-1. **Store Postgres** - implementasi `store.Store` memakai `pgx`, dengan klaim
-   atomik `UPDATE ... WHERE id = (SELECT ... FOR UPDATE SKIP LOCKED)` seperti yang
-   sudah disiapkan di `migrations/0001_init.sql`. Setelah ini worker bisa
-   dijalankan multi-proses.
-2. **Resolver secret nyata** - Vault atau AWS Secrets Manager, dipasang ke
+1. **Resolver secret nyata** - Vault atau AWS Secrets Manager, dipasang ke
    `worker.Secrets`. `DenyAllResolver` sengaja gagal keras supaya password kosong
    tidak pernah terkirim ke connector.
-3. **Streaming log (SSE)** - `GET /v1/runs/{id}/logs`. Untuk tail singkat, pakai
+2. **Streaming log (SSE)** - `GET /v1/runs/{id}/logs`. Untuk tail singkat, pakai
    `runs.log_tail` yang sudah disimpan. Untuk streaming langsung, baca file log
    Meltano - lokasinya di luar direktori project, lihat doc 15 bagian 15.6.
-4. **Autentikasi dan scope** - ganti `tenant_id` di body/query dengan klaim token,
+3. **Autentikasi dan scope** - ganti `tenant_id` di body/query dengan klaim token,
    mengikuti tabel scope di doc 14 bagian 14.1.2.
-5. **Connector native (Go)** untuk Postgres dan MySQL - lihat roadmap doc 10.
+4. **Connector native (Go)** untuk Postgres dan MySQL - lihat roadmap doc 10.
 
 ## Catatan penting
 
@@ -187,17 +330,19 @@ pengaman advisory Meltano (`JobFinder.latest_running`) dan menjadi alasan field
 - **Exit code tidak dinormalkan.** Nilai asli disimpan di `runs.exit_code`,
   termasuk kasus Meltano menormalkannya sendiri (doc 6 bagian 6.7).
 - **Meltano harus sudah ter-provision per tenant** sebelum job dijalankan. Worker
-  tidak pernah memanggil `add` atau `install`.
+  tidak pernah memanggil `add` atau `install`. Gunakan `cmd/provision` untuk
+  langkah satu kali ini.
 - **`state_id` dihitung control plane**, bukan dibaca dari Meltano. Formula dan
   validasi charset-nya ada di `internal/meltano/stateid.go`.
 
 ## Status verifikasi
 
-`go build ./...`, `go vet ./...`, dan `go test ./...` dijalankan pada Go 1.26.8
-(Windows) dan semuanya lolos. Unit test mencakup `StateID`, `SanitizeFilename`,
-`BuildArgs`, dan `Classify` - termasuk kasus nyata `dev:tap-gitlab-to-target-jsonl`
-yang menjadi `devtap-gitlab-to-target-jsonl`.
+`go test ./...` dan build dijalankan pada Go 1.26.8 (Windows). Unit test mencakup
+pemetaan environment PostgreSQL, validasi source/destination, provisioning,
+`StateID`, `SanitizeFilename`, `BuildArgs`, dan `Classify`.
 
-Yang **belum** terverifikasi: `Adapter.Run` belum diuji end-to-end terhadap Meltano
-sungguhan dari kode ini. Kontrak argv dan environment yang dipakai berasal dari uji
-manual yang tercatat di doc 15 bagian 15.6.
+Alur API -> worker -> Meltano pernah diuji end-to-end dengan dua container
+PostgreSQL 16 lokal: tabel `public.orders` berisi tiga baris disalin ke server B;
+setelah satu baris diubah dan satu baris ditambah di A, run berikutnya menghasilkan
+tepat empat baris di B tanpa duplikasi. Ini membuktikan replikasi tabel PostgreSQL
+dan update berulang untuk data uji tersebut.

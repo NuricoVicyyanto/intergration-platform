@@ -38,18 +38,23 @@ type Store interface {
 	CreateTenant(ctx context.Context, tenant domain.Tenant) (domain.Tenant, error)
 	GetTenant(ctx context.Context, id string) (domain.Tenant, error)
 	ListTenants(ctx context.Context) ([]domain.Tenant, error)
+	UpdateTenant(ctx context.Context, tenant domain.Tenant) (domain.Tenant, error)
+	DeleteTenant(ctx context.Context, id string) error
 
 	// --- Connection ---
 
 	CreateConnection(ctx context.Context, conn domain.Connection) (domain.Connection, error)
 	GetConnection(ctx context.Context, id string) (domain.Connection, error)
 	ListConnections(ctx context.Context, tenantID string) ([]domain.Connection, error)
+	UpdateConnection(ctx context.Context, conn domain.Connection) (domain.Connection, error)
+	DeleteConnection(ctx context.Context, id string) error
 
 	// --- Pipeline ---
 
 	CreatePipeline(ctx context.Context, p domain.Pipeline) (domain.Pipeline, error)
 	GetPipeline(ctx context.Context, id string) (domain.Pipeline, error)
 	ListPipelines(ctx context.Context, tenantID string) ([]domain.Pipeline, error)
+	UpdatePipeline(ctx context.Context, p domain.Pipeline) (domain.Pipeline, error)
 	DeletePipeline(ctx context.Context, id string) error
 
 	// --- Run ---

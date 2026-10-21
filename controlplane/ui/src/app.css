@@ -1,0 +1,145 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: "Segoe UI Variable", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  color: #142033;
+  background: #f5f7fa;
+  font-synthesis: none;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: #f5f7fa;
+  -webkit-font-smoothing: antialiased;
+}
+button, input, select, textarea { font: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+
+.display {
+  font-family: "Segoe UI Variable Display", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: -0.025em;
+}
+
+.scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+.scrollbar::-webkit-scrollbar-thumb { background: #cbd5df; border-radius: 999px; }
+.scrollbar::-webkit-scrollbar-track { background: transparent; }
+
+@layer components {
+  .sidebar {
+    @apply relative overflow-hidden bg-navy text-slate-300;
+  }
+  .nav-item {
+    @apply flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium text-slate-400 transition;
+  }
+  .nav-item:hover { @apply bg-white/[.055] text-white; }
+  .active-nav { @apply bg-white/[.09] text-white; }
+  .active-nav .nav-icon { @apply bg-brand text-white; }
+  .nav-icon { @apply grid h-8 w-8 place-items-center rounded-md bg-white/[.05] text-slate-400 transition; }
+
+  .button-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition;
+  }
+  .button-primary:hover { @apply bg-brand-deep shadow-md; }
+  .button-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition;
+  }
+  .button-secondary:hover { @apply border-slate-300 bg-slate-50; }
+  .button-danger {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white transition;
+  }
+  .button-danger:hover { @apply bg-rose-700; }
+  .icon-button {
+    @apply grid h-8 w-8 place-items-center rounded-lg border border-transparent text-slate-400 transition;
+  }
+  .icon-button:hover { @apply border-line bg-white text-slate-700; }
+  .icon-button-danger:hover { @apply border-rose-100 bg-rose-50 text-rose-600; }
+
+  .panel {
+    @apply rounded-xl border border-line bg-white shadow-panel;
+  }
+  .eyebrow {
+    @apply text-[10px] font-bold uppercase tracking-[.2em] text-slate-500;
+  }
+  .count-badge {
+    @apply rounded-full border border-line bg-slate-50 px-2.5 py-1 text-[11px] font-bold text-slate-600;
+  }
+  .toolbar {
+    @apply mb-4 flex flex-wrap items-center gap-2.5 rounded-xl border border-line bg-white p-2.5 shadow-panel;
+  }
+  .search-field {
+    @apply relative flex min-w-[220px] flex-1 items-center;
+  }
+  .search-field input {
+    @apply h-10 w-full rounded-lg border border-line bg-slate-50 pl-9 pr-9 text-sm text-ink outline-none transition placeholder:text-slate-400;
+  }
+  .search-field input:focus {
+    @apply border-brand bg-white ring-4 ring-blue-50;
+  }
+  .search-field-icon {
+    @apply pointer-events-none absolute left-3 text-slate-400;
+  }
+  .search-field-clear {
+    @apply absolute right-2 grid h-7 w-7 place-items-center rounded-md text-slate-400 transition hover:bg-slate-200 hover:text-slate-700;
+  }
+  .filter-select {
+    @apply h-10 min-w-[145px] rounded-lg border border-line bg-white px-3 text-sm font-medium text-slate-700 outline-none transition;
+  }
+  .filter-select:focus {
+    @apply border-brand ring-4 ring-blue-50;
+  }
+  .metric {
+    @apply display mt-2 text-[26px] font-semibold leading-none text-ink;
+  }
+  .stat-card {
+    @apply rounded-xl border border-line bg-white p-5 shadow-panel;
+  }
+
+  .field-label {
+    @apply mb-4 block text-xs font-semibold text-slate-700;
+  }
+  .field-label input,
+  .field-label select,
+  .field-label textarea {
+    @apply mt-2 block w-full rounded-lg border border-line bg-white px-3.5 py-2.5 text-sm font-normal text-ink outline-none transition placeholder:text-slate-400;
+  }
+  .field-label input:focus,
+  .field-label select:focus,
+  .field-label textarea:focus {
+    @apply border-brand ring-4 ring-blue-50;
+  }
+  .field-label input:disabled,
+  .field-label select:disabled {
+    @apply bg-slate-50 text-slate-500;
+  }
+  .field-hint { @apply mt-1.5 text-[11px] leading-4 text-slate-500; }
+
+  .modal-backdrop {
+    @apply fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-slate-950/35 p-4 backdrop-blur-[3px];
+  }
+  .modal-shell {
+    @apply max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-xl border border-white/60 bg-white p-6 shadow-modal;
+  }
+  .modal-wide { @apply max-w-2xl; }
+
+  .db-logo {
+    @apply grid shrink-0 place-items-center rounded-lg border border-slate-200/80 bg-white;
+    width: calc(var(--logo-size) + 14px);
+    height: calc(var(--logo-size) + 14px);
+  }
+  .db-logo img { display: block; object-fit: contain; }
+  .db-logo-fallback { @apply text-slate-500; }
+  .connection-logo { @apply grid h-12 w-12 shrink-0 place-items-center rounded-lg bg-slate-50; }
+
+  .status-pill { @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold capitalize; }
+  .status-dot { @apply h-1.5 w-1.5 rounded-full bg-current; }
+
+  .empty-state {
+    @apply flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white px-6 py-14 text-center;
+  }
+}

@@ -11,6 +11,7 @@ help:
 
 build:
 	go build -o bin/control-plane ./cmd/control-plane
+	go build -o bin/provision ./cmd/provision
 	go build -o bin/worker ./cmd/worker
 
 test:
