@@ -32,6 +32,7 @@ const CONNECTORS = [
   { label: 'Solarvista Live', href: '/connectors/tap-solarvista', category: 'extractor' },
   { label: 'GitLab', href: '/connectors/tap-gitlab', category: 'extractor' },
   { label: 'CloudWatch', href: '/connectors/tap-cloudwatch', category: 'extractor' },
+  { label: 'SAP Fieldglass', href: '/connectors/tap-sap-fieldglass', category: 'extractor' },
 ];
 
 function ConnectorCardTitle({ label }) {

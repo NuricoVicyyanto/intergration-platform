@@ -1,0 +1,77 @@
+---
+title: SAP Fieldglass
+description: Sync active external worker data from SAP Fieldglass.
+---
+
+import ConnectorTypeBadge from '@site/src/components/ConnectorTypeBadge';
+
+# SAP Fieldglass
+
+<ConnectorTypeBadge type="extractor" block />
+
+SAP Fieldglass is a cloud platform for managing external workers, services procurement, suppliers, work orders and statements of work. Connect it to bring active worker and work order data into your own systems.
+
+## At a glance
+
+| Property | Value |
+|---|---|
+| **Authentication** | API key |
+| **Sync mode** | Full refresh |
+| **Available stream** | Active Worker Download |
+
+## What you can sync
+
+The connector downloads the active workers in your SAP Fieldglass account. Each record can include worker and work order identifiers, worker name and email, buyer and supplier details, business unit, cost center, site, start and end dates, status, currency, pay and bill rates, plus any custom fields exposed by your Fieldglass configuration.
+
+The connector performs a full refresh on each run. It does not support incremental syncs.
+
+## Prerequisites
+
+- A **SAP Fieldglass account** with access to the Active Worker Download API.
+- An **API key** created through [SAP API Business Hub](https://api.sap.com/).
+
+The connector sends the API key in the `apikey` request header. The current connector implementation calls SAP's Fieldglass connector endpoint at `https://sandbox.api.sap.com/fieldglass/api/vc/connector`; confirm with your SAP administrator that your API key and tenant are provisioned for that endpoint before using it in production.
+
+## Setup
+
+### In SAP Fieldglass
+
+1. Confirm that your Fieldglass account can access the Active Worker Download API.
+2. Obtain an API key through SAP API Business Hub and confirm that it is enabled for the Fieldglass connector endpoint.
+
+### In Meltano Cloud
+
+1. Enter the API key.
+2. Select the `data` stream during stream selection. It contains the records from the Active Worker Download API.
+3. Optionally configure schema flattening and stream maps.
+
+### In the Meltano CLI
+
+```bash
+meltano add extractor tap-sap-fieldglass
+meltano config tap-sap-fieldglass set airbyte_config.api_key <your-api-key>
+meltano invoke tap-sap-fieldglass --discover
+```
+
+## Advanced configuration
+
+- **Flattening**: enable schema flattening and optionally set the maximum nesting depth. This is useful when nested properties appear in your Fieldglass data.
+- **Stream maps**: apply transformations to stream names and record fields. Keep credentials and other sensitive values in secret environment variables rather than in `meltano.yml`.
+- **Airbyte image**: override the default `airbyte/source-sap-fieldglass` image or tag only when you need to test a specific connector release.
+
+## Settings
+
+| Setting | Type | Description |
+|---|---|---|
+| `airbyte_config.api_key` | string | API key used to authenticate to SAP Fieldglass. Sensitive and required. |
+| `airbyte_spec.image` | string | Airbyte connector image. Default: `airbyte/source-sap-fieldglass`. |
+| `airbyte_spec.tag` | string | Airbyte connector image tag. Default: `latest`. |
+| `docker_mounts` | array | Docker mounts made available to the connector container. |
+| `flattening_enabled` | boolean | Whether to flatten nested properties in emitted records. |
+| `flattening_max_depth` | integer | Maximum depth used when flattening nested properties. |
+| `stream_maps` | object | Stream maps applied to the extracted data. |
+| `stream_map_config` | object | User-defined values available to stream map expressions. |
+
+## Need help?
+
+If a stream or field you need isn't listed here or the connector doesn't work as expected, file it through the [usual Meltano support channel](https://meltano.com/contact).

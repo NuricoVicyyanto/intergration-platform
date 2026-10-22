@@ -51,6 +51,7 @@ const sidebars = {
         { type: 'doc', id: 'connectors/tap-pinterest', label: 'Pinterest' },
         { type: 'doc', id: 'connectors/tap-postgres', label: 'PostgreSQL' },
         { type: 'doc', id: 'connectors/tap-rakutenadvertising', label: 'Rakuten Advertising' },
+        { type: 'doc', id: 'connectors/tap-sap-fieldglass', label: 'SAP Fieldglass' },
         { type: 'doc', id: 'connectors/tap-snowflake', label: 'Snowflake' },
         { type: 'doc', id: 'connectors/tap-solarvista', label: 'Solarvista Live' },
         { type: 'doc', id: 'connectors/tap-spreadsheets-imap', label: 'Spreadsheets (IMAP)' },

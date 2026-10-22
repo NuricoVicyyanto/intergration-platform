@@ -123,7 +123,7 @@ func preferredProvisionOptions(name string) provisionOptions {
 	case "target-mysql":
 		return provisionOptions{Python: "3.11"}
 	case "target-mongodb":
-		return provisionOptions{Variant: "hotgluexyz"}
+		return provisionOptions{Variant: "hotgluexyz", Python: "3.11"}
 	case "target-s3":
 		return provisionOptions{Variant: "crowemi", Python: "3.10"}
 	case "target-duckdb":

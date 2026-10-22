@@ -1,0 +1,11 @@
+# Ganti domain dan hash password sebelum dipakai.
+# Buat hash: caddy hash-password --plaintext 'PASSWORD_ANDA'
+meltano.example.com {
+    encode zstd gzip
+
+    basic_auth {
+        admin REPLACE_WITH_CADDY_PASSWORD_HASH
+    }
+
+    reverse_proxy 127.0.0.1:3000
+}

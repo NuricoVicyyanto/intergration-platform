@@ -1,0 +1,83 @@
+name: meltano-controlplane
+
+x-controlplane-image: &controlplane-image
+  image: meltano-controlplane-runtime:local
+  build:
+    context: .
+    dockerfile: controlplane/Dockerfile
+    target: runtime
+
+x-controlplane-service: &controlplane-service
+  <<: *controlplane-image
+  env_file:
+    - .env.docker
+  environment:
+    CP_ENV_FILE: /dev/null
+    CP_HTTP_ADDR: ":8080"
+    CP_AUTO_MIGRATE: "true"
+    CP_MELTANO_BIN: /opt/meltano/.venv/bin/meltano
+    CP_TENANTS_ROOT: /srv/tenants
+    PYTHONUNBUFFERED: "1"
+    PYTHONUTF8: "1"
+    NO_COLOR: "1"
+    TERM: dumb
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  volumes:
+    - tenants:/srv/tenants
+    - meltano-home:/root
+  init: true
+
+services:
+  api:
+    <<: *controlplane-service
+    command: ["/usr/local/bin/control-plane"]
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/readyz', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+
+  provision:
+    <<: *controlplane-service
+    entrypoint: ["/usr/local/bin/provision-once"]
+    command: []
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: "no"
+
+  worker:
+    <<: *controlplane-service
+    command: ["/usr/local/bin/worker"]
+    depends_on:
+      api:
+        condition: service_healthy
+      provision:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  ui:
+    image: meltano-controlplane-ui:local
+    build:
+      context: .
+      dockerfile: controlplane/Dockerfile
+      target: ui
+    ports:
+      - "127.0.0.1:3000:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  tenants:
+  meltano-home:

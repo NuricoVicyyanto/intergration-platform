@@ -20,6 +20,45 @@ Untuk mencoba sekarang juga: ikuti **[bagian 16](../meltano-go-reference/16-cara
 dan impor **[Postman collection](postman/control-plane.postman_collection.json)** (20 request, 6 folder,
 ID tersimpan otomatis ke variable).
 
+## Docker: Python + Go + Svelte + database eksternal
+
+Stack Docker menjalankan API Go, worker Go + Meltano/Python, provisioning tenant,
+dan UI Svelte dalam satu perintah. PostgreSQL tidak ikut dijalankan oleh Compose;
+kedua DSN harus menunjuk database eksternal yang sudah dibuat.
+
+```bash
+# dari root repository
+cp docker.env.example .env.docker
+# isi CP_DATABASE_URL dan CP_SYSTEM_DB_URI di .env.docker
+docker compose up --build
+```
+
+UI: `http://localhost:3000`
+API: `http://localhost:8080`
+
+Database control plane dan system database Meltano harus berbeda karena keduanya
+memakai nama tabel yang sama. Jika PostgreSQL berada di host Docker Desktop,
+gunakan `host.docker.internal` pada DSN. Panduan lengkap ada di
+[`docker/README.md`](docker/README.md).
+
+Runbook terperinci:
+
+- [`docs/docker-local-step-by-step.md`](docs/docker-local-step-by-step.md) -
+  instalasi dan verifikasi local dari nol
+- [`docs/docker-server-deployment.md`](docs/docker-server-deployment.md) -
+  deployment server, akses aman, backup, update, dan rollback
+- [`docs/docker-oracle-linux-server.md`](docs/docker-oracle-linux-server.md) -
+  instalasi khusus Oracle Linux 8/9
+
+Script operasional:
+
+- [`deploy/deploy.sh`](deploy/deploy.sh) - build, start, menunggu provisioning,
+  dan health check
+- [`deploy/check.sh`](deploy/check.sh) - verifikasi API, worker, UI, dan database
+- [`deploy/backup.sh`](deploy/backup.sh) - backup dua database dan dua volume
+- [`deploy/Caddyfile.example`](deploy/Caddyfile.example) - reverse proxy HTTPS
+  dengan Basic Auth
+
 > **Pindahkan ke repo sendiri.** Direktori ini berada di dalam checkout Meltano
 > hanya karena itu satu-satunya lokasi yang bisa ditulis saat dibuat. Untuk
 > menjadikannya repo terpisah:
@@ -50,7 +89,8 @@ controlplane/
 │   │   └── memory/        # implementasi in-memory
 │   └── worker/            # klaim job, heartbeat, eksekusi, reaper lease
 ├── migrations/            # skema Postgres + query klaim
-├── docker-compose.yml
+├── docker/                # script Nginx dan bootstrap tenant
+├── docker-compose.yml     # include stack Docker di root repository
 └── env.example
 ```
 
@@ -62,18 +102,14 @@ nanti perlu memisahkan siklus rilis, pecah menjadi beberapa module dengan
 Meltano - argv, environment variable, exit code, dan `state_id`. Kalau Meltano
 berubah, hanya paket itu yang perlu disentuh.
 
-## Prasyarat
+## Prasyarat pengembangan lokal
 
 - Go 1.24 atau lebih baru (diuji pada Go 1.26.8)
 - Meltano 4.4.1 untuk eksekusi sungguhan
   (lihat `../meltano-go-reference/15-menjalankan-meltano.md`)
 - Postgres untuk produksi; belum diperlukan untuk menjalankan API dengan store in-memory
 
-**Tanpa dependency eksternal.** Seluruh kode memakai pustaka standar, sehingga
-`go build` dan `go test` berjalan tanpa jaringan. Driver Postgres akan ditambahkan
-saat store Postgres diimplementasikan.
-
-## Menjalankan
+## Menjalankan tanpa Docker
 
 ```bash
 cp env.example .env
@@ -121,10 +157,18 @@ CP_DATABASE_URL=memory:// CP_ALLOW_PLAINTEXT_SECRETS=true CP_EMBEDDED_WORKER=tru
 Mode ini menyimpan password di store control-plane dan **tidak boleh digunakan di production**.
 Default tetap `false`; deployment production harus menggunakan `secret_ref` dan resolver secret manager.
 
-Postgres untuk pengembangan:
+Untuk pengembangan lokal dengan PostgreSQL, sediakan database eksternal dan isi
+`CP_DATABASE_URL` di `.env`. File Compose lama yang mengelola PostgreSQL lokal
+sudah diganti dengan include stack Docker di root repository.
+
+Jika ingin tetap memakai database lokal tanpa stack aplikasi:
 
 ```bash
-docker compose up -d postgres
+docker run --rm -d --name controlplane-postgres \
+  -e POSTGRES_USER=controlplane \
+  -e POSTGRES_PASSWORD=controlplane \
+  -e POSTGRES_DB=controlplane \
+  -p 5432:5432 postgres:16-alpine
 ```
 
 Di Windows, arahkan cache Go keluar dari profil bila lingkungan Anda membatasinya:
