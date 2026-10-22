@@ -48,8 +48,11 @@ Script siap pakai:
 4. Nyalakan stack:
 
    ```bash
-   docker compose up --build
+   bash controlplane/deploy/deploy.sh
+   bash controlplane/deploy/check.sh
    ```
+
+   Alternatif tanpa script: `docker compose up --build -d`.
 
 UI tersedia di `http://localhost:3000`, sedangkan API langsung tersedia di
 `http://localhost:8080`. Browser hanya perlu membuka UI karena Nginx

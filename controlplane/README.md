@@ -16,6 +16,9 @@ Rancangan lengkapnya ada di direktori sebelah, `../meltano-go-reference/`:
 | [`docs/copy-postgres-schema-gateway-log.md`](docs/copy-postgres-schema-gateway-log.md) | contoh copy PostgreSQL dari schema `gateway_log` |
 | [`docs/connection-types.md`](docs/connection-types.md) | referensi field dan contoh semua tipe connection |
 
+Semua panduan aplikasi dan deployment tersedia di
+[`docs/README.md`](docs/README.md).
+
 Untuk mencoba sekarang juga: ikuti **[bagian 16](../meltano-go-reference/16-cara-menjalankan-meltano-golang.md)**
 dan impor **[Postman collection](postman/control-plane.postman_collection.json)** (20 request, 6 folder,
 ID tersimpan otomatis ke variable).
@@ -29,8 +32,10 @@ kedua DSN harus menunjuk database eksternal yang sudah dibuat.
 ```bash
 # dari root repository
 cp docker.env.example .env.docker
+chmod 600 .env.docker
 # isi CP_DATABASE_URL dan CP_SYSTEM_DB_URI di .env.docker
-docker compose up --build
+bash controlplane/deploy/deploy.sh
+bash controlplane/deploy/check.sh
 ```
 
 UI: `http://localhost:3000`
@@ -74,24 +79,26 @@ Script operasional:
 ## Struktur monorepo
 
 ```
-controlplane/
-├── cmd/
-│   ├── control-plane/     # binary HTTP API
-│   ├── provision/         # provisioning project + plugin tenant
-│   └── worker/            # binary worker eksekusi
-├── internal/
-│   ├── api/               # router net/http + RFC 7807 problem+json
-│   ├── config/            # konfigurasi dari env (prefix CP_)
-│   ├── domain/            # tipe inti, tanpa dependency infrastruktur
-│   ├── meltano/           # SATU-SATUNYA titik integrasi ke CLI Meltano
-│   ├── obs/               # logging log/slog
-│   ├── store/             # kontrak persistensi
-│   │   └── memory/        # implementasi in-memory
-│   └── worker/            # klaim job, heartbeat, eksekusi, reaper lease
-├── migrations/            # skema Postgres + query klaim
-├── docker/                # script Nginx dan bootstrap tenant
-├── docker-compose.yml     # include stack Docker di root repository
-└── env.example
+cmd/
+  control-plane/           # binary HTTP API
+  provision/               # provisioning project + plugin tenant
+  worker/                  # binary worker eksekusi
+deploy/                    # deploy, check, backup, dan Caddy
+docker/                    # Nginx dan bootstrap tenant
+docs/                      # panduan aplikasi dan deployment
+internal/
+  api/                     # router net/http + RFC 7807 problem+json
+  config/                  # konfigurasi env dengan prefix CP_
+  domain/                  # tipe inti tanpa dependency infrastruktur
+  meltano/                 # integrasi tunggal ke CLI Meltano
+  obs/                     # logging log/slog
+  store/                   # kontrak dan implementasi persistensi
+  worker/                  # klaim job, heartbeat, lease, dan eksekusi
+migrations/                # skema Postgres dan query klaim
+postman/                   # collection API
+ui/                        # aplikasi Svelte
+Dockerfile                 # image Go + Python/Meltano dan UI
+env.example                # contoh konfigurasi non-Docker
 ```
 
 Dua binary berbagi satu `internal/`, dan itulah bentuk monorepo di sini. Kalau
@@ -104,7 +111,7 @@ berubah, hanya paket itu yang perlu disentuh.
 
 ## Prasyarat pengembangan lokal
 
-- Go 1.24 atau lebih baru (diuji pada Go 1.26.8)
+- Go 1.25 atau lebih baru (diuji pada Go 1.26.8)
 - Meltano 4.4.1 untuk eksekusi sungguhan
   (lihat `../meltano-go-reference/15-menjalankan-meltano.md`)
 - Postgres untuk produksi; belum diperlukan untuk menjalankan API dengan store in-memory
