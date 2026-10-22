@@ -1,6 +1,8 @@
 package meltano
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -42,6 +44,84 @@ func TestAppendDatabaseURI(t *testing.T) {
 	}
 	if args := appendDatabaseURI([]string{"install"}, " "); len(args) != 1 {
 		t.Fatalf("URI kosong tidak boleh ditambahkan: %#v", args)
+	}
+}
+
+func TestPatchTargetMSSQL(t *testing.T) {
+	projectDir := t.TempDir()
+	targetFile := filepath.Join(
+		projectDir,
+		".meltano", "loaders", "target-mssql", "venv",
+		"lib", "python3.13", "site-packages", "target_mssql", "target.py",
+	)
+	if err := os.MkdirAll(filepath.Dir(targetFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := `th.Property(
+                    "path_prefix",
+                    th.StringType,
+                    default="target-mssql",
+                    description="Path prefix",
+                ),`
+	if err := os.WriteFile(targetFile, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lockFile := filepath.Join(
+		projectDir, "plugins", "loaders", "target-mssql--meltanolabs.lock",
+	)
+	if err := os.MkdirAll(filepath.Dir(lockFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lock := `{
+  "settings_group_validation": [
+    [
+      "azure_blob_storage.account_name",
+      "azure_blob_storage.container",
+      "azure_blob_storage.credential",
+      "azure_blob_storage.data_source",
+      "azure_blob_storage.sas_token"
+    ]
+  ],
+  "settings": [
+    {
+      "name": "azure_blob_storage.path_prefix",
+      "kind": "string",
+      "value": "target-mssql"
+    },
+    {
+      "name": "host",
+      "kind": "string"
+    }
+  ]
+}`
+	if err := os.WriteFile(lockFile, []byte(lock), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := patchTargetMSSQL(projectDir); err != nil {
+		t.Fatalf("patch: %v", err)
+	}
+	patched, err := os.ReadFile(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(patched), `default="target-mssql"`) {
+		t.Fatalf("default Azure path masih ada:\n%s", patched)
+	}
+	patchedLock, err := os.ReadFile(lockFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(patchedLock), "azure_blob_storage.path_prefix") {
+		t.Fatalf("default Azure lock masih ada:\n%s", patchedLock)
+	}
+	if strings.Contains(string(patchedLock), "azure_blob_storage.sas_token") {
+		t.Fatalf("required Azure group masih ada:\n%s", patchedLock)
+	}
+
+	// Re-running the patch must be safe after plugin installation is repeated.
+	if err := patchTargetMSSQL(projectDir); err != nil {
+		t.Fatalf("patch kedua: %v", err)
 	}
 }
 

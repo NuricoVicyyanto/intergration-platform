@@ -13,7 +13,7 @@ marker="${project_dir}/.docker-provisioned"
 mkdir -p "${tenants_root}"
 
 if [ "${install_all}" = "true" ]; then
-  provision_signature="catalog-v1"
+  provision_signature="catalog-v3"
 else
   provision_signature="custom:${extractor}:${loader}"
 fi

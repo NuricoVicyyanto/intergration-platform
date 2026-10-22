@@ -2,6 +2,7 @@ package meltano
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -84,6 +85,11 @@ func (a *Adapter) ProvisionProject(
 	if _, err := a.runProvisionCommand(ctx, req.ProjectDir, args...); err != nil {
 		return nil, err
 	}
+	if req.Loader == "target-mssql" {
+		if err := patchTargetMSSQL(req.ProjectDir); err != nil {
+			return nil, err
+		}
+	}
 
 	installed, err := a.ListPlugins(ctx, req.ProjectDir)
 	if err != nil {
@@ -99,6 +105,139 @@ func (a *Adapter) ProvisionProject(
 		}
 	}
 	return installed, nil
+}
+
+func patchTargetMSSQL(projectDir string) error {
+	if err := patchTargetMSSQLOptionalAzure(projectDir); err != nil {
+		return err
+	}
+	return patchTargetMSSQLLockfile(projectDir)
+}
+
+// patchTargetMSSQLOptionalAzure fixes an upstream schema bug where the
+// optional Azure staging object is always materialized because its nested
+// path_prefix has a default. The result is a non-empty object without the
+// required Azure fields, so configurations that do not use Azure fail
+// validation. Patch after every install because reinstalling restores the file.
+func patchTargetMSSQLOptionalAzure(projectDir string) error {
+	root := filepath.Join(projectDir, ".meltano", "loaders", "target-mssql")
+	targetFile := ""
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || entry.Name() != "target.py" {
+			return nil
+		}
+		if filepath.Base(filepath.Dir(path)) != "target_mssql" {
+			return nil
+		}
+		targetFile = path
+		return filepath.SkipAll
+	})
+	if err != nil {
+		return fmt.Errorf("cari schema target-mssql: %w", err)
+	}
+	if targetFile == "" {
+		return fmt.Errorf("schema target-mssql tidak ditemukan setelah instalasi")
+	}
+
+	info, err := os.Stat(targetFile)
+	if err != nil {
+		return fmt.Errorf("periksa schema target-mssql: %w", err)
+	}
+	content, err := os.ReadFile(targetFile)
+	if err != nil {
+		return fmt.Errorf("baca schema target-mssql: %w", err)
+	}
+
+	const azurePathDefault = "                    default=\"target-mssql\",\n"
+	if !strings.Contains(string(content), azurePathDefault) {
+		return nil
+	}
+	patched := strings.ReplaceAll(string(content), azurePathDefault, "")
+	if err := os.WriteFile(targetFile, []byte(patched), info.Mode()); err != nil {
+		return fmt.Errorf("patch schema target-mssql: %w", err)
+	}
+	return nil
+}
+
+// patchTargetMSSQLLockfile removes the Azure-only required group and nested
+// default from the Hub lockfile. Meltano uses the lockfile for config
+// composition, so patching only the installed Python package is insufficient.
+func patchTargetMSSQLLockfile(projectDir string) error {
+	files, err := filepath.Glob(filepath.Join(
+		projectDir, "plugins", "loaders", "target-mssql*.lock",
+	))
+	if err != nil {
+		return fmt.Errorf("cari lockfile target-mssql: %w", err)
+	}
+	if len(files) == 0 {
+		return fmt.Errorf("lockfile target-mssql tidak ditemukan")
+	}
+
+	for _, path := range files {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("baca lockfile target-mssql: %w", err)
+		}
+		var definition map[string]any
+		if err := json.Unmarshal(content, &definition); err != nil {
+			return fmt.Errorf("parse lockfile target-mssql: %w", err)
+		}
+
+		changed := false
+		if groups, ok := definition["settings_group_validation"].([]any); ok {
+			filtered := make([]any, 0, len(groups))
+			for _, group := range groups {
+				items, _ := group.([]any)
+				hasAzure := false
+				for _, item := range items {
+					name, _ := item.(string)
+					if strings.HasPrefix(name, "azure_blob_storage.") {
+						hasAzure = true
+						break
+					}
+				}
+				if hasAzure {
+					changed = true
+					continue
+				}
+				filtered = append(filtered, group)
+			}
+			definition["settings_group_validation"] = filtered
+		}
+
+		if settings, ok := definition["settings"].([]any); ok {
+			filtered := make([]any, 0, len(settings))
+			for _, setting := range settings {
+				item, _ := setting.(map[string]any)
+				if item["name"] == "azure_blob_storage.path_prefix" {
+					changed = true
+					continue
+				}
+				filtered = append(filtered, setting)
+			}
+			definition["settings"] = filtered
+		}
+
+		if !changed {
+			continue
+		}
+		patched, err := json.MarshalIndent(definition, "", "  ")
+		if err != nil {
+			return fmt.Errorf("encode lockfile target-mssql: %w", err)
+		}
+		patched = append(patched, '\n')
+		info, err := os.Stat(path)
+		if err != nil {
+			return fmt.Errorf("periksa lockfile target-mssql: %w", err)
+		}
+		if err := os.WriteFile(path, patched, info.Mode()); err != nil {
+			return fmt.Errorf("patch lockfile target-mssql: %w", err)
+		}
+	}
+	return nil
 }
 
 type provisionOptions struct {
