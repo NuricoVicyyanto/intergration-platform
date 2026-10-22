@@ -4,6 +4,8 @@ Mulai dari halaman ini untuk menemukan panduan yang sesuai.
 
 ## Menjalankan aplikasi
 
+- [Authentication dan role](authentication.md) - login, seeder superadmin, dan
+  pembatasan akses.
 - [Docker local step by step](docker-local-step-by-step.md) - instalasi,
   provisioning, verifikasi, dan troubleshooting di komputer local.
 - [Deployment server umum](docker-server-deployment.md) - Linux, akses aman,

@@ -33,6 +33,20 @@ type Completion struct {
 
 // Store adalah kontrak persistensi yang dipakai API dan worker.
 type Store interface {
+	// --- Auth ---
+
+	CountUsers(ctx context.Context) (int, error)
+	CreateUser(ctx context.Context, user domain.User) (domain.User, error)
+	GetUserByUsername(ctx context.Context, username string) (domain.User, error)
+	GetUserByID(ctx context.Context, id string) (domain.User, error)
+	ListUsers(ctx context.Context) ([]domain.User, error)
+	UpdateUser(ctx context.Context, user domain.User, passwordHash *string) (domain.User, error)
+	DeleteUser(ctx context.Context, id string) error
+	CreateSession(ctx context.Context, tokenHash, userID string, expiresAt time.Time) error
+	GetSessionUser(ctx context.Context, tokenHash string, now time.Time) (domain.User, error)
+	DeleteSession(ctx context.Context, tokenHash string) error
+	DeleteUserSessions(ctx context.Context, userID string) error
+
 	// --- Tenant ---
 
 	CreateTenant(ctx context.Context, tenant domain.Tenant) (domain.Tenant, error)

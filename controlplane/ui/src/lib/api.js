@@ -18,6 +18,9 @@ async function request(path, options = {}) {
     }
     const error = new Error(detail);
     error.status = response.status;
+    if (response.status === 401 && path !== '/v1/auth/login') {
+      window.dispatchEvent(new CustomEvent('auth:required'));
+    }
     throw error;
   }
   if (response.status === 204) return null;
@@ -27,6 +30,23 @@ async function request(path, options = {}) {
 export const api = {
   health: () => request('/healthz'),
   version: () => request('/v1/version'),
+  login: (username, password) => request('/v1/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ username, password })
+  }),
+  logout: () => request('/v1/auth/logout', { method: 'POST' }),
+  me: () => request('/v1/auth/me'),
+  changePassword: (currentPassword, newPassword) => request('/v1/auth/password', {
+    method: 'POST',
+    body: JSON.stringify({
+      current_password: currentPassword,
+      new_password: newPassword
+    })
+  }),
+  users: () => request('/v1/users'),
+  createUser: (body) => request('/v1/users', { method: 'POST', body: JSON.stringify(body) }),
+  updateUser: (id, body) => request(`/v1/users/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  deleteUser: (id) => request(`/v1/users/${id}`, { method: 'DELETE' }),
   tenants: () => request('/v1/tenants'),
   createTenant: (body) => request('/v1/tenants', { method: 'POST', body: JSON.stringify(body) }),
   updateTenant: (id, body) => request(`/v1/tenants/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),

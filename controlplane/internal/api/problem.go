@@ -56,6 +56,10 @@ func writeProblem(w http.ResponseWriter, r *http.Request, status int, slug, titl
 // (lihat doc 14 bagian 14.10 nomor 4).
 func writeError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, domain.ErrUnauthorized):
+		writeProblem(w, r, http.StatusUnauthorized, "unauthorized", "Authentication required", err.Error())
+	case errors.Is(err, domain.ErrForbidden):
+		writeProblem(w, r, http.StatusForbidden, "forbidden", "Access denied", err.Error())
 	case errors.Is(err, domain.ErrNotFound):
 		writeProblem(w, r, http.StatusNotFound, "not-found", "Resource not found", err.Error())
 	case errors.Is(err, domain.ErrConflict):

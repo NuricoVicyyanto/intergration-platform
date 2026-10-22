@@ -20,6 +20,8 @@ import (
 // Store adalah implementasi in-memory dari store.Store.
 type Store struct {
 	mu          sync.Mutex
+	users       map[string]domain.User
+	sessions    map[string]domain.AuthSession
 	tenants     map[string]domain.Tenant
 	connections map[string]domain.Connection
 	pipelines   map[string]domain.Pipeline
@@ -31,6 +33,8 @@ type Store struct {
 // New membuat Store kosong.
 func New() *Store {
 	return &Store{
+		users:       map[string]domain.User{},
+		sessions:    map[string]domain.AuthSession{},
 		tenants:     map[string]domain.Tenant{},
 		connections: map[string]domain.Connection{},
 		pipelines:   map[string]domain.Pipeline{},
@@ -53,6 +57,165 @@ func NewID() string {
 	b[8] = (b[8] & 0x3f) | 0x80 // varian RFC 4122
 	s := hex.EncodeToString(b[:])
 	return s[0:8] + "-" + s[8:12] + "-" + s[12:16] + "-" + s[16:20] + "-" + s[20:32]
+}
+
+func (s *Store) CountUsers(_ context.Context) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.users), nil
+}
+
+func (s *Store) CreateUser(_ context.Context, user domain.User) (domain.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, existing := range s.users {
+		if existing.Username == user.Username {
+			return domain.User{}, fmt.Errorf("%w: user %q sudah ada", domain.ErrConflict, user.Username)
+		}
+	}
+	if user.ID == "" {
+		user.ID = NewID()
+	}
+	now := time.Now().UTC()
+	if user.CreatedAt.IsZero() {
+		user.CreatedAt = now
+	}
+	if user.UpdatedAt.IsZero() {
+		user.UpdatedAt = now
+	}
+	s.users[user.ID] = user
+	return user, nil
+}
+
+func (s *Store) GetUserByUsername(_ context.Context, username string) (domain.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, user := range s.users {
+		if user.Username == username {
+			return user, nil
+		}
+	}
+	return domain.User{}, fmt.Errorf("%w: user %s", domain.ErrNotFound, username)
+}
+
+func (s *Store) GetUserByID(_ context.Context, id string) (domain.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	user, ok := s.users[id]
+	if !ok {
+		return domain.User{}, fmt.Errorf("%w: user %s", domain.ErrNotFound, id)
+	}
+	return user, nil
+}
+
+func (s *Store) ListUsers(_ context.Context) ([]domain.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]domain.User, 0, len(s.users))
+	for _, user := range s.users {
+		out = append(out, user)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Username < out[j].Username })
+	return out, nil
+}
+
+func (s *Store) UpdateUser(
+	_ context.Context,
+	user domain.User,
+	passwordHash *string,
+) (domain.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing, ok := s.users[user.ID]
+	if !ok {
+		return domain.User{}, fmt.Errorf("%w: user %s", domain.ErrNotFound, user.ID)
+	}
+	for id, other := range s.users {
+		if id != user.ID && other.Username == user.Username {
+			return domain.User{}, fmt.Errorf("%w: user %q sudah ada", domain.ErrConflict, user.Username)
+		}
+	}
+	if passwordHash != nil {
+		existing.PasswordHash = *passwordHash
+	}
+	existing.Username = user.Username
+	existing.DisplayName = user.DisplayName
+	existing.Role = user.Role
+	existing.UpdatedAt = time.Now().UTC()
+	s.users[user.ID] = existing
+	return existing, nil
+}
+
+func (s *Store) DeleteUser(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.users[id]; !ok {
+		return fmt.Errorf("%w: user %s", domain.ErrNotFound, id)
+	}
+	delete(s.users, id)
+	for token, session := range s.sessions {
+		if session.UserID == id {
+			delete(s.sessions, token)
+		}
+	}
+	return nil
+}
+
+func (s *Store) CreateSession(
+	_ context.Context,
+	tokenHash, userID string,
+	expiresAt time.Time,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.users[userID]; !ok {
+		return fmt.Errorf("%w: user %s", domain.ErrNotFound, userID)
+	}
+	s.sessions[tokenHash] = domain.AuthSession{
+		TokenHash: tokenHash,
+		UserID:    userID,
+		ExpiresAt: expiresAt,
+		CreatedAt: time.Now().UTC(),
+	}
+	return nil
+}
+
+func (s *Store) GetSessionUser(
+	_ context.Context,
+	tokenHash string,
+	now time.Time,
+) (domain.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.sessions[tokenHash]
+	if !ok || !session.ExpiresAt.After(now) {
+		delete(s.sessions, tokenHash)
+		return domain.User{}, fmt.Errorf("%w: session tidak valid", domain.ErrUnauthorized)
+	}
+	user, ok := s.users[session.UserID]
+	if !ok {
+		delete(s.sessions, tokenHash)
+		return domain.User{}, fmt.Errorf("%w: user session tidak ditemukan", domain.ErrUnauthorized)
+	}
+	return user, nil
+}
+
+func (s *Store) DeleteSession(_ context.Context, tokenHash string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.sessions, tokenHash)
+	return nil
+}
+
+func (s *Store) DeleteUserSessions(_ context.Context, userID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for token, session := range s.sessions {
+		if session.UserID == userID {
+			delete(s.sessions, token)
+		}
+	}
+	return nil
 }
 
 func (s *Store) CreateTenant(_ context.Context, t domain.Tenant) (domain.Tenant, error) {

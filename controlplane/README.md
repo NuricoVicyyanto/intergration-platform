@@ -51,6 +51,8 @@ gunakan `host.docker.internal` pada DSN. Panduan lengkap ada di
 
 Runbook terperinci:
 
+- [`docs/authentication.md`](docs/authentication.md) - login, role superadmin
+  dan admin, serta seeder akun pertama
 - [`docs/docker-local-step-by-step.md`](docs/docker-local-step-by-step.md) -
   instalasi dan verifikasi local dari nol
 - [`docs/docker-server-deployment.md`](docs/docker-server-deployment.md) -
@@ -235,7 +237,8 @@ make test build
 | Execution log dan progres (`GET /v1/runs/{id}/logs`) | selesai; UI melakukan polling saat run aktif |
 | Stop run dari Overview | queued dibatalkan langsung; running dihentikan melalui context cancellation worker |
 | Streaming log (SSE) | **belum** |
-| Autentikasi dan tenant dari token | **belum** - masih lewat `tenant_id` di body/query |
+| Autentikasi dashboard | session login + role `superadmin`/`admin` |
+| Tenant dari token | **belum** - masih lewat `tenant_id` di body/query |
 | Cakupan OpenAPI doc 14 | sebagian: 27 dari 34 endpoint |
 
 ## Cara pakai cepat

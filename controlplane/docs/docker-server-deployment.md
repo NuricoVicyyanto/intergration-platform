@@ -3,9 +3,9 @@
 Dokumen ini adalah runbook eksekusi stack yang sama di server. Nilai seperti
 domain, IP, dan akun database harus disesuaikan dengan server yang dipilih.
 
-> **Penting:** aplikasi belum memiliki autentikasi pengguna. Jangan membuka UI
-> atau API langsung ke internet. Tahap awal harus melalui SSH tunnel, VPN, atau
-> reverse proxy dengan TLS dan Basic Auth.
+> **Penting:** dashboard sudah dilindungi session login dan role, tetapi akses
+> publik tetap harus memakai HTTPS. Gunakan reverse proxy dengan TLS; Basic Auth
+> atau VPN dapat ditambahkan sebagai lapisan pertahanan kedua.
 
 ## 1. Target deployment
 
@@ -125,7 +125,13 @@ CP_ALLOW_PLAINTEXT_SECRETS=false
 CP_LOG_LEVEL=info
 CP_BOOTSTRAP_TENANT=acme
 CP_BOOTSTRAP_ENVIRONMENT=dev
+CP_SUPERADMIN_USERNAME=superadmin
+CP_SUPERADMIN_PASSWORD=GANTI_PASSWORD_MINIMAL_12_KARAKTER
+CP_SESSION_HOURS=24
 ```
+
+Akun superadmin dibuat otomatis pada start pertama. Lihat
+[`authentication.md`](authentication.md) untuk role dan pengelolaan user.
 
 Seluruh 15 connector dipasang secara default. Tambahkan
 `CP_BOOTSTRAP_INSTALL_ALL_CONNECTORS=false` hanya jika server memang dibatasi
@@ -190,7 +196,7 @@ Pilihan 2, domain dengan Nginx/Caddy dan TLS:
 2. Arahkan DNS domain ke IP server, lalu konfigurasi reverse proxy ke
    `127.0.0.1:3000`.
 3. Aktifkan HTTPS.
-4. Tambahkan Basic Auth atau identitas akses lain.
+4. Pertimbangkan Basic Auth atau identitas akses lain sebagai lapisan tambahan.
 5. Jangan meneruskan port API langsung ke publik.
 
 Template Caddyfile tersedia di

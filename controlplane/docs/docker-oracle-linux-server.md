@@ -120,11 +120,17 @@ CP_BOOTSTRAP_INSTALL_ALL_CONNECTORS=true
 
 CP_ALLOW_PLAINTEXT_SECRETS=false
 CP_LOG_LEVEL=info
+CP_SUPERADMIN_USERNAME=superadmin
+CP_SUPERADMIN_PASSWORD=GANTI_PASSWORD_MINIMAL_12_KARAKTER
+CP_SESSION_HOURS=24
 ```
 
 Seluruh 15 connector dipasang secara default. Baris
 `CP_BOOTSTRAP_INSTALL_ALL_CONNECTORS=true` boleh dihilangkan; set ke `false`
 hanya jika server memang dibatasi ke dua connector awal.
+
+Superadmin pertama dibuat otomatis pada start pertama. Lihat
+[`authentication.md`](authentication.md) untuk role dan pengelolaan user.
 
 Jika password mengandung karakter khusus, URL-encode password tersebut.
 Jangan commit `.env.docker` karena berisi kredensial.
@@ -208,9 +214,9 @@ Buka di komputer local:
 http://localhost:3000
 ```
 
-Aplikasi belum memiliki autentikasi pengguna. Jangan membuka port `3000` atau
-`8080` langsung ke internet. Untuk akses public, gunakan reverse proxy dengan
-TLS dan Basic Auth, VPN, atau identity-aware proxy.
+Dashboard sudah memiliki login dan role superadmin/admin. Untuk akses public,
+tetap gunakan reverse proxy dengan TLS. Basic Auth, VPN, atau identity-aware
+proxy dapat ditambahkan sebagai lapisan pertahanan kedua.
 
 ## 9. Firewalld
 

@@ -46,6 +46,8 @@ type Server struct {
 	connectors            ConnectorLister
 	tenantsRoot           string
 	allowPlaintextSecrets bool
+	sessionDuration       time.Duration
+	disableAuth           bool // hanya untuk unit test handler lama
 }
 
 // ConnectorLister membaca daftar plugin project Meltano sebuah tenant.
@@ -71,9 +73,23 @@ func WithPlaintextSecrets(enabled bool) Option {
 	return func(s *Server) { s.allowPlaintextSecrets = enabled }
 }
 
+// WithSessionDuration mengatur masa berlaku cookie session.
+func WithSessionDuration(duration time.Duration) Option {
+	return func(s *Server) {
+		if duration > 0 {
+			s.sessionDuration = duration
+		}
+	}
+}
+
 // New membuat Server.
 func New(st store.Store, log *slog.Logger, meltanoVersion string, opts ...Option) *Server {
-	s := &Server{store: st, log: log, meltanoVersion: meltanoVersion}
+	s := &Server{
+		store:           st,
+		log:             log,
+		meltanoVersion:  meltanoVersion,
+		sessionDuration: 24 * time.Hour,
+	}
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -90,6 +106,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
 	mux.HandleFunc("GET /v1/version", s.handleVersion)
+	mux.HandleFunc("POST /v1/auth/login", s.handleLogin)
+	mux.HandleFunc("POST /v1/auth/logout", s.handleLogout)
+	mux.HandleFunc("GET /v1/auth/me", s.handleMe)
+	mux.HandleFunc("POST /v1/auth/password", s.handleChangePassword)
+
+	mux.HandleFunc("GET /v1/users", s.handleListUsers)
+	mux.HandleFunc("POST /v1/users", s.handleCreateUser)
+	mux.HandleFunc("PATCH /v1/users/{userID}", s.handleUpdateUser)
+	mux.HandleFunc("DELETE /v1/users/{userID}", s.handleDeleteUser)
 
 	mux.HandleFunc("GET /v1/tenants", s.handleListTenants)
 	mux.HandleFunc("POST /v1/tenants", s.handleCreateTenant)
@@ -121,7 +146,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/runs/{runID}/retry", s.handleRetryRun)
 	mux.HandleFunc("GET /v1/runs/{runID}/events", s.handleListEvents)
 
-	return s.withRequestID(s.withLogging(s.withLocalCORS(mux)))
+	return s.withRequestID(s.withLogging(s.withLocalCORS(s.withAuth(mux))))
 }
 
 // --- middleware ---

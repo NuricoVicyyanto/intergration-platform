@@ -26,6 +26,8 @@
   ],
   "variable": [
     { "key": "baseUrl", "value": "http://localhost:8080" },
+    { "key": "superadminUsername", "value": "superadmin" },
+    { "key": "superadminPassword", "value": "SuperAdmin!2026-Meltano" },
     { "key": "idempotencyKey", "value": "" },
     { "key": "tenantName", "value": "acme" },
     { "key": "environmentName", "value": "acme" },
@@ -43,6 +45,34 @@
     {
       "name": "0 - Meta",
       "item": [
+        {
+          "name": "Login superadmin",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"username\":\"{{superadminUsername}}\",\"password\":\"{{superadminPassword}}\"}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "auth", "login"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('login succeeds', function () { pm.response.to.have.status(200); });",
+                  "pm.test('superadmin role', function () { pm.expect(pm.response.json().user.role).to.eql('superadmin'); });"
+                ]
+              }
+            }
+          ]
+        },
         {
           "name": "Health",
           "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/healthz", "host": ["{{baseUrl}}"], "path": ["healthz"] } },

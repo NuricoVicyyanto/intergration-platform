@@ -74,6 +74,165 @@ func NewWithDB(db *sql.DB) *Store { return &Store{db: db} }
 // Close menutup pool koneksi.
 func (s *Store) Close() error { return s.db.Close() }
 
+func (s *Store) CountUsers(ctx context.Context) (int, error) {
+	var count int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM auth_users`).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func (s *Store) CreateUser(ctx context.Context, user domain.User) (domain.User, error) {
+	const q = `
+		INSERT INTO auth_users
+		  (id, username, display_name, password_hash, role, created_at, updated_at)
+		VALUES
+		  (COALESCE(NULLIF($1,'')::uuid, gen_random_uuid()), lower($2), $3, $4, $5,
+		   COALESCE($6::timestamptz, now()), COALESCE($7::timestamptz, now()))
+		RETURNING id::text, username, display_name, role, password_hash, created_at, updated_at`
+	out, err := scanUser(s.db.QueryRowContext(ctx, q,
+		user.ID, user.Username, user.DisplayName, user.PasswordHash, user.Role,
+		tsParam(user.CreatedAt), tsParam(user.UpdatedAt)))
+	if err != nil {
+		if pgErrCode(err) == sqlstateUnique {
+			return domain.User{}, fmt.Errorf("%w: user %q sudah ada", domain.ErrConflict, user.Username)
+		}
+		return domain.User{}, err
+	}
+	return out, nil
+}
+
+func (s *Store) GetUserByUsername(ctx context.Context, username string) (domain.User, error) {
+	const q = `
+		SELECT id::text, username, display_name, role, password_hash, created_at, updated_at
+		  FROM auth_users WHERE username = lower($1)`
+	user, err := scanUser(s.db.QueryRowContext(ctx, q, username))
+	if err != nil {
+		return domain.User{}, lookupErr(err, "user", username)
+	}
+	return user, nil
+}
+
+func (s *Store) GetUserByID(ctx context.Context, id string) (domain.User, error) {
+	const q = `
+		SELECT id::text, username, display_name, role, password_hash, created_at, updated_at
+		  FROM auth_users WHERE id = $1::uuid`
+	user, err := scanUser(s.db.QueryRowContext(ctx, q, id))
+	if err != nil {
+		return domain.User{}, lookupErr(err, "user", id)
+	}
+	return user, nil
+}
+
+func (s *Store) ListUsers(ctx context.Context) ([]domain.User, error) {
+	const q = `
+		SELECT id::text, username, display_name, role, password_hash, created_at, updated_at
+		  FROM auth_users ORDER BY username`
+	rows, err := s.db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]domain.User, 0)
+	for rows.Next() {
+		user, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, user)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) UpdateUser(
+	ctx context.Context,
+	user domain.User,
+	passwordHash *string,
+) (domain.User, error) {
+	const q = `
+		UPDATE auth_users
+		   SET username = lower($2),
+		       display_name = $3,
+		       role = $4,
+		       password_hash = COALESCE(NULLIF($5,''), password_hash),
+		       updated_at = now()
+		 WHERE id = $1::uuid
+		RETURNING id::text, username, display_name, role, password_hash, created_at, updated_at`
+	hash := ""
+	if passwordHash != nil {
+		hash = *passwordHash
+	}
+	out, err := scanUser(s.db.QueryRowContext(ctx, q,
+		user.ID, user.Username, user.DisplayName, user.Role, hash))
+	if err != nil {
+		if pgErrCode(err) == sqlstateUnique {
+			return domain.User{}, fmt.Errorf("%w: user %q sudah ada", domain.ErrConflict, user.Username)
+		}
+		return domain.User{}, lookupErr(err, "user", user.ID)
+	}
+	return out, nil
+}
+
+func (s *Store) DeleteUser(ctx context.Context, id string) error {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM auth_users WHERE id = $1::uuid`, id)
+	if err != nil {
+		return lookupErr(err, "user", id)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return fmt.Errorf("%w: user %s", domain.ErrNotFound, id)
+	}
+	return nil
+}
+
+func (s *Store) CreateSession(
+	ctx context.Context,
+	tokenHash, userID string,
+	expiresAt time.Time,
+) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO auth_sessions (token_hash, user_id, expires_at)
+		VALUES ($1, $2::uuid, $3::timestamptz)`,
+		tokenHash, userID, expiresAt.UTC())
+	return err
+}
+
+func (s *Store) GetSessionUser(
+	ctx context.Context,
+	tokenHash string,
+	now time.Time,
+) (domain.User, error) {
+	const q = `
+		SELECT u.id::text, u.username, u.display_name, u.role, u.password_hash,
+		       u.created_at, u.updated_at
+		  FROM auth_sessions s
+		  JOIN auth_users u ON u.id = s.user_id
+		 WHERE s.token_hash = $1 AND s.expires_at > $2::timestamptz`
+	user, err := scanUser(s.db.QueryRowContext(ctx, q, tokenHash, now.UTC()))
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.User{}, fmt.Errorf("%w: session tidak valid", domain.ErrUnauthorized)
+	}
+	if err != nil {
+		return domain.User{}, err
+	}
+	return user, nil
+}
+
+func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM auth_sessions WHERE token_hash = $1`, tokenHash)
+	return err
+}
+
+func (s *Store) DeleteUserSessions(ctx context.Context, userID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM auth_sessions WHERE user_id = $1::uuid`, userID)
+	return err
+}
+
 // Migrate menjalankan seluruh file .sql di package migrations secara berurutan.
 //
 // Migrasi bersifat idempoten (IF NOT EXISTS) dan dilindungi advisory lock,
@@ -958,6 +1117,22 @@ const runCols = `id::text, pipeline_id::text, status, attempt, auto_attempts, re
 
 type scanner interface {
 	Scan(dest ...any) error
+}
+
+func scanUser(row scanner) (domain.User, error) {
+	var (
+		user domain.User
+		role string
+	)
+	err := row.Scan(
+		&user.ID, &user.Username, &user.DisplayName, &role, &user.PasswordHash,
+		&user.CreatedAt, &user.UpdatedAt,
+	)
+	if err != nil {
+		return domain.User{}, err
+	}
+	user.Role = domain.UserRole(role)
+	return user, nil
 }
 
 func scanTenant(row scanner) (domain.Tenant, error) {

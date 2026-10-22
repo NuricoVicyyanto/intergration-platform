@@ -62,6 +62,8 @@ fi
 echo "Mendaftarkan tenant ${tenant} ke control plane..."
 python - "${tenant}" "${environment}" <<'PY'
 import json
+import http.cookiejar
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -69,8 +71,22 @@ import urllib.request
 tenant = sys.argv[1]
 environment = sys.argv[2]
 base = "http://api:8080"
+username = os.environ.get("CP_SUPERADMIN_USERNAME", "superadmin")
+password = os.environ.get("CP_SUPERADMIN_PASSWORD", "SuperAdmin!2026-Meltano")
+opener = urllib.request.build_opener(
+    urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar())
+)
 
-with urllib.request.urlopen(f"{base}/v1/tenants", timeout=10) as response:
+login = urllib.request.Request(
+    f"{base}/v1/auth/login",
+    data=json.dumps({"username": username, "password": password}).encode(),
+    headers={"Content-Type": "application/json"},
+    method="POST",
+)
+with opener.open(login, timeout=10):
+    pass
+
+with opener.open(f"{base}/v1/tenants", timeout=10) as response:
     tenants = json.load(response).get("data", [])
 
 if any(item.get("name") == tenant for item in tenants):
@@ -89,7 +105,7 @@ request = urllib.request.Request(
     method="POST",
 )
 try:
-    with urllib.request.urlopen(request, timeout=10) as response:
+    with opener.open(request, timeout=10) as response:
         created = json.load(response)
 except urllib.error.HTTPError as error:
     if error.code == 409:

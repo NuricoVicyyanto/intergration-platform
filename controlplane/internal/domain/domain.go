@@ -8,10 +8,43 @@ import (
 
 // Error sentinel yang dipakai lapisan store dan API.
 var (
-	ErrNotFound = errors.New("not found")
-	ErrConflict = errors.New("conflict")
-	ErrInvalid  = errors.New("invalid")
+	ErrNotFound     = errors.New("not found")
+	ErrConflict     = errors.New("conflict")
+	ErrInvalid      = errors.New("invalid")
+	ErrUnauthorized = errors.New("unauthorized")
+	ErrForbidden    = errors.New("forbidden")
 )
+
+// UserRole menentukan kemampuan user di dashboard.
+type UserRole string
+
+const (
+	RoleSuperadmin UserRole = "superadmin"
+	RoleAdmin      UserRole = "admin"
+)
+
+func (r UserRole) Valid() bool {
+	return r == RoleSuperadmin || r == RoleAdmin
+}
+
+// User adalah akun dashboard. PasswordHash tidak pernah diserialisasi ke client.
+type User struct {
+	ID           string    `json:"id"`
+	Username     string    `json:"username"`
+	DisplayName  string    `json:"display_name"`
+	Role         UserRole  `json:"role"`
+	PasswordHash string    `json:"-"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// AuthSession menyimpan hash token, bukan token asli.
+type AuthSession struct {
+	TokenHash string
+	UserID    string
+	ExpiresAt time.Time
+	CreatedAt time.Time
+}
 
 // RunStatus adalah status yang dikelola control plane.
 //

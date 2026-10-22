@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/example/controlplane/internal/api"
+	"github.com/example/controlplane/internal/auth"
 	"github.com/example/controlplane/internal/config"
 	"github.com/example/controlplane/internal/meltano"
 	"github.com/example/controlplane/internal/obs"
@@ -47,11 +48,28 @@ func run() error {
 	}
 	defer func() { _ = storefactory.Close(st) }()
 	log.Info("store siap", slog.String("backend", storefactory.Backend(cfg.DatabaseURL)))
+	seedCtx, cancelSeed := context.WithTimeout(context.Background(), 30*time.Second)
+	created, err := auth.SeedSuperadmin(
+		seedCtx,
+		st,
+		cfg.SuperadminUsername,
+		cfg.SuperadminDisplayName,
+		cfg.SuperadminPassword,
+	)
+	cancelSeed()
+	if err != nil {
+		return err
+	}
+	if created {
+		log.Info("superadmin awal dibuat",
+			slog.String("username", cfg.SuperadminUsername))
+	}
 
 	adapter := &meltano.Adapter{Bin: cfg.MeltanoBin, Logger: log}
 	srv := api.New(st, log, detectMeltanoVersion(cfg.MeltanoBin),
 		api.WithConnectorLister(adapter, cfg.TenantsRoot),
-		api.WithPlaintextSecrets(cfg.AllowPlaintextSecrets))
+		api.WithPlaintextSecrets(cfg.AllowPlaintextSecrets),
+		api.WithSessionDuration(time.Duration(cfg.SessionHours)*time.Hour))
 
 	httpSrv := &http.Server{
 		Addr:              cfg.HTTPAddr,

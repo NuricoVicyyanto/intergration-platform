@@ -31,6 +31,7 @@ func newTestServer(lister ConnectorLister, tenantsRoot string) (*Server, *memory
 	st := memory.New()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := New(st, log, "test")
+	srv.disableAuth = true
 	if lister != nil {
 		WithConnectorLister(lister, tenantsRoot)(srv)
 	}

@@ -227,6 +227,16 @@ Buka UI:
 Start-Process http://localhost:3000
 ```
 
+Login awal:
+
+```text
+Username: superadmin
+Password: SuperAdmin!2026-Meltano
+```
+
+Ubah password melalui menu **Password** di sidebar. Detail role dan endpoint
+tersedia di [`authentication.md`](authentication.md).
+
 UI menggunakan Nginx untuk mem-proxy `/v1`, `/healthz`, dan `/readyz` ke API.
 Browser cukup membuka port `3000`.
 

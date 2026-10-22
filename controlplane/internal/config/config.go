@@ -26,12 +26,16 @@ type Config struct {
 	// SystemDBURI adalah MELTANO_DATABASE_URI yang diinjeksi ke proses Meltano.
 	systemDBURI string
 
-	WorkerConcurrency int
-	JobTimeoutSeconds int
-	HeartbeatSeconds  int
-	LeaseSeconds      int
-	LogTailLines      int
-	LogLevel          string
+	WorkerConcurrency     int
+	JobTimeoutSeconds     int
+	HeartbeatSeconds      int
+	LeaseSeconds          int
+	LogTailLines          int
+	LogLevel              string
+	SuperadminUsername    string
+	SuperadminDisplayName string
+	SuperadminPassword    string
+	SessionHours          int
 	// EmbeddedWorker menjalankan worker di dalam proses API dengan store yang
 	// sama. Dipakai untuk demo dan pengembangan sebelum store Postgres ada
 	// (lihat README dan doc 16 bagian 16.5).
@@ -69,6 +73,10 @@ func Load() (Config, error) {
 		LeaseSeconds:          envInt("CP_LEASE_SECONDS", 300),
 		LogTailLines:          envInt("CP_LOG_TAIL_LINES", 100),
 		LogLevel:              env("CP_LOG_LEVEL", "info"),
+		SuperadminUsername:    env("CP_SUPERADMIN_USERNAME", "superadmin"),
+		SuperadminDisplayName: env("CP_SUPERADMIN_DISPLAY_NAME", "Super Admin"),
+		SuperadminPassword:    env("CP_SUPERADMIN_PASSWORD", "SuperAdmin!2026-Meltano"),
+		SessionHours:          envInt("CP_SESSION_HOURS", 24),
 		EmbeddedWorker:        envBool("CP_EMBEDDED_WORKER", false),
 		AllowPlaintextSecrets: envBool("CP_ALLOW_PLAINTEXT_SECRETS", false),
 	}
@@ -81,6 +89,9 @@ func Load() (Config, error) {
 	}
 	if cfg.JobTimeoutSeconds < 1 {
 		return Config{}, fmt.Errorf("CP_JOB_TIMEOUT_SECONDS harus >= 1")
+	}
+	if cfg.SessionHours < 1 {
+		return Config{}, fmt.Errorf("CP_SESSION_HOURS harus >= 1")
 	}
 	// Heartbeat harus jauh lebih pendek daripada lease, kalau tidak run akan
 	// dianggap yatim saat masih berjalan.

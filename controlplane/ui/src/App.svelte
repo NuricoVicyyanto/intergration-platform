@@ -11,7 +11,8 @@
     { name: 'Overview', icon: 'overview' },
     { name: 'Pipelines', icon: 'pipelines' },
     { name: 'Connections', icon: 'connections' },
-    { name: 'Connectors', icon: 'connectors' }
+    { name: 'Connectors', icon: 'connectors' },
+    { name: 'Users', icon: 'users' }
   ];
 
   const driverLabels = {
@@ -121,6 +122,24 @@
   let connectionFilter = 'all';
   let connectorSearch = '';
   let connectorFilter = 'all';
+  let authLoading = true;
+  let authenticated = false;
+  let currentUser = null;
+  let loginUsername = 'superadmin';
+  let loginPassword = '';
+  let loginBusy = false;
+  let loginError = '';
+  let users = [];
+  let usersLoading = false;
+  let showUserModal = false;
+  let editingUser = null;
+  let userSaving = false;
+  let userStatus = '';
+  let userForm = { username: '', display_name: '', password: '', role: 'admin' };
+  let showPasswordModal = false;
+  let passwordSaving = false;
+  let passwordStatus = '';
+  let passwordForm = { current_password: '', new_password: '', confirm_password: '' };
 
   let showTenantModal = false;
   let showConnectionModal = false;
@@ -139,6 +158,8 @@
   let deleteBusy = false;
   let stopTarget = null;
   let stopBusy = false;
+
+  $: visibleNav = nav.filter((item) => item.name !== 'Users' || currentUser?.role === 'superadmin');
 
   $: sourceConnections = connections.filter((item) => item.kind === 'source');
   $: destinationConnections = connections.filter((item) => item.kind === 'destination');
@@ -253,9 +274,15 @@
 
   onMount(() => {
     const onHashChange = () => { page = pageFromHash(); };
+    const onAuthRequired = () => {
+      authenticated = false;
+      currentUser = null;
+      loginError = 'Your session has expired. Sign in again.';
+    };
     const executionPoller = setInterval(() => {
       if (
-        page === 'Overview'
+        authenticated
+        && page === 'Overview'
         && executionRunId
         && executionDetail
         && ['queued', 'running', 'cancelling'].includes(executionDetail.run?.status)
@@ -264,12 +291,84 @@
       }
     }, 3000);
     window.addEventListener('hashchange', onHashChange);
-    load();
+    window.addEventListener('auth:required', onAuthRequired);
+    initializeAuth();
     return () => {
       clearInterval(executionPoller);
       window.removeEventListener('hashchange', onHashChange);
+      window.removeEventListener('auth:required', onAuthRequired);
     };
   });
+
+  async function initializeAuth() {
+    authLoading = true;
+    loginError = '';
+    try {
+      const response = await api.me();
+      currentUser = response.user;
+      authenticated = true;
+      if (currentUser.role !== 'superadmin' && page === 'Users') {
+        goToPage('Overview');
+      }
+      await load();
+      if (currentUser.role === 'superadmin') {
+        await loadUsers();
+      }
+    } catch (err) {
+      authenticated = false;
+      currentUser = null;
+      if (err.status !== 401) {
+        loginError = err.message;
+      }
+    } finally {
+      authLoading = false;
+    }
+  }
+
+  async function submitLogin() {
+    if (loginBusy) return;
+    loginBusy = true;
+    loginError = '';
+    try {
+      const response = await api.login(loginUsername.trim(), loginPassword);
+      currentUser = response.user;
+      authenticated = true;
+      loginPassword = '';
+      if (currentUser.role === 'superadmin') {
+        await loadUsers();
+      }
+      await load();
+    } catch (err) {
+      loginError = err.message;
+    } finally {
+      loginBusy = false;
+    }
+  }
+
+  async function logout() {
+    try {
+      await api.logout();
+    } catch {
+      // Cookie remains the source of truth; clear local state regardless.
+    }
+    authenticated = false;
+    currentUser = null;
+    users = [];
+    loginPassword = '';
+  }
+
+  async function loadUsers() {
+    if (currentUser?.role !== 'superadmin' || usersLoading) return;
+    usersLoading = true;
+    try {
+      const response = await api.users();
+      users = response.data || [];
+    } catch (err) {
+      if (err.status !== 401) error = err.message;
+    } finally {
+      usersLoading = false;
+    }
+  }
 
   function pageFromHash() {
     const match = nav.find((item) => item.name.toLowerCase() === window.location.hash.replace('#', '').toLowerCase());
@@ -278,6 +377,9 @@
 
   function goToPage(name) {
     page = name;
+    if (name === 'Users') {
+      loadUsers();
+    }
     const hash = name.toLowerCase();
     if (window.location.hash !== `#${hash}`) {
       window.history.replaceState(null, '', `#${hash}`);
@@ -882,6 +984,11 @@
         title: 'Delete pipeline?',
         message: `Delete “${item.name}”?`,
         detail: 'Run history is removed with the pipeline. Deletion is blocked while a run is active.'
+      },
+      user: {
+        title: 'Delete user?',
+        message: `Delete dashboard access for "${item.username}"?`,
+        detail: 'Existing sessions for this user are revoked immediately.'
       }
     }[type];
     deleteTarget = { type, item, ...copy };
@@ -891,6 +998,7 @@
     if (!deleteTarget || deleteBusy) return;
     deleteBusy = true;
     error = '';
+    const deletedType = deleteTarget.type;
     try {
       if (deleteTarget.type === 'tenant') {
         await api.deleteTenant(deleteTarget.item.id);
@@ -900,16 +1008,94 @@
       } else if (deleteTarget.type === 'connection') {
         await api.deleteConnection(deleteTarget.item.id);
         notify('Connection deleted');
+      } else if (deleteTarget.type === 'user') {
+        await api.deleteUser(deleteTarget.item.id);
+        notify('User deleted');
       } else {
         await api.deletePipeline(deleteTarget.item.id);
         notify('Pipeline deleted');
       }
       deleteTarget = null;
-      await loadTenantData();
+      if (deletedType === 'user') {
+        await loadUsers();
+      } else {
+        await loadTenantData();
+      }
     } catch (err) {
       error = err.message;
     } finally {
       deleteBusy = false;
+    }
+  }
+
+  function openNewUser() {
+    editingUser = null;
+    userForm = { username: '', display_name: '', password: '', role: 'admin' };
+    userStatus = '';
+    showUserModal = true;
+  }
+
+  function openEditUser(user) {
+    editingUser = user;
+    userForm = {
+      username: user.username,
+      display_name: user.display_name || '',
+      password: '',
+      role: user.role
+    };
+    userStatus = '';
+    showUserModal = true;
+  }
+
+  async function saveUser() {
+    if (userSaving) return;
+    userSaving = true;
+    userStatus = '';
+    try {
+      const payload = {
+        username: userForm.username.trim().toLowerCase(),
+        display_name: userForm.display_name.trim(),
+        role: userForm.role
+      };
+      if (userForm.password) payload.password = userForm.password;
+      if (editingUser) {
+        await api.updateUser(editingUser.id, payload);
+        notify('User updated');
+      } else {
+        await api.createUser(payload);
+        notify('User created');
+      }
+      showUserModal = false;
+      await loadUsers();
+    } catch (err) {
+      userStatus = err.message;
+    } finally {
+      userSaving = false;
+    }
+  }
+
+  function openPasswordModal() {
+    passwordForm = { current_password: '', new_password: '', confirm_password: '' };
+    passwordStatus = '';
+    showPasswordModal = true;
+  }
+
+  async function savePassword() {
+    if (passwordSaving) return;
+    if (passwordForm.new_password !== passwordForm.confirm_password) {
+      passwordStatus = 'New password confirmation does not match.';
+      return;
+    }
+    passwordSaving = true;
+    passwordStatus = '';
+    try {
+      await api.changePassword(passwordForm.current_password, passwordForm.new_password);
+      showPasswordModal = false;
+      notify('Password updated');
+    } catch (err) {
+      passwordStatus = err.message;
+    } finally {
+      passwordSaving = false;
     }
   }
 
@@ -991,6 +1177,34 @@
   }
 </script>
 
+{#if authLoading}
+  <div class="grid min-h-screen place-items-center bg-navy text-sm text-slate-400">
+    <div class="text-center">
+      <span class="mx-auto grid h-11 w-11 place-items-center rounded-xl bg-brand text-white"><Icon name="workflow" size={22} /></span>
+      <p class="mt-4 font-medium">Checking your session...</p>
+    </div>
+  </div>
+{:else if !authenticated}
+  <div class="grid min-h-screen place-items-center bg-[radial-gradient(circle_at_top_left,_#1d4ed8_0,_#0f172a_38%,_#08101f_100%)] p-5">
+    <div class="w-full max-w-md rounded-2xl border border-white/10 bg-white p-7 shadow-2xl sm:p-9">
+      <div class="mb-7 flex items-center gap-3">
+        <span class="grid h-11 w-11 place-items-center rounded-xl bg-brand text-white"><Icon name="workflow" size={22} /></span>
+        <div>
+          <h1 class="display text-xl font-semibold text-ink">Data Integration Platform</h1>
+          <p class="mt-1 text-xs text-slate-500">Sign in to manage pipelines and access.</p>
+        </div>
+      </div>
+      <form on:submit|preventDefault={submitLogin}>
+        <label class="field-label">Username<input bind:value={loginUsername} autocomplete="username" placeholder="superadmin" /></label>
+        <label class="field-label">Password<input type="password" bind:value={loginPassword} autocomplete="current-password" placeholder="Enter your password" /></label>
+        {#if loginError}<div class="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs leading-5 text-rose-700">{loginError}</div>{/if}
+        <button type="submit" class="button-primary w-full" disabled={loginBusy || !loginUsername.trim() || !loginPassword}>
+          {loginBusy ? 'Signing in...' : 'Sign in'}
+        </button>
+      </form>
+    </div>
+  </div>
+{:else}
 <div class="flex min-h-screen">
   <aside class="sidebar hidden w-[252px] shrink-0 flex-col border-r border-slate-800 px-3 py-4 lg:flex">
     <div class="mb-7 flex items-start gap-3 px-2">
@@ -1034,7 +1248,7 @@
 
     <div class="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[.16em] text-slate-600">Manage</div>
     <nav class="space-y-1" aria-label="Primary navigation">
-      {#each nav as item}
+      {#each visibleNav as item}
         <button class:active-nav={page === item.name} class="nav-item" aria-current={page === item.name ? 'page' : undefined} on:click={() => goToPage(item.name)}>
           <span class="nav-icon"><Icon name={item.icon} size={16} /></span>
           <span>{item.name}</span>
@@ -1044,6 +1258,14 @@
     </nav>
 
     <div class="mt-auto border-t border-white/[.07] px-2 pt-4">
+      <div class="mb-4 rounded-lg bg-white/[.035] p-3">
+        <p class="truncate text-xs font-semibold text-white">{currentUser?.display_name || currentUser?.username}</p>
+        <p class="mt-1 text-[10px] capitalize text-slate-500">{currentUser?.role}</p>
+        <div class="mt-3 flex gap-2">
+          <button class="rounded-md border border-white/10 px-2 py-1 text-[10px] font-semibold text-slate-300 hover:bg-white/10" on:click={openPasswordModal}>Password</button>
+          <button class="rounded-md border border-white/10 px-2 py-1 text-[10px] font-semibold text-rose-300 hover:bg-rose-500/10" on:click={logout}>Sign out</button>
+        </div>
+      </div>
       <div class="flex items-center justify-between">
         <span class="text-[11px] font-medium text-slate-400">Platform status</span>
         <span class="inline-flex items-center gap-1.5 text-[10px] font-semibold text-emerald-400">
@@ -1527,6 +1749,41 @@
             <ConnectionGroup title="Sources" items={filteredSourceConnections} kind="source" filtered={connectionFiltersActive} onEdit={openEditConnection} onDelete={(item) => requestDelete('connection', item)} />
             <ConnectionGroup title="Destinations" items={filteredDestinationConnections} kind="destination" filtered={connectionFiltersActive} onEdit={openEditConnection} onDelete={(item) => requestDelete('connection', item)} />
           </div>
+        {:else if page === 'Users'}
+          <section class="mb-6 flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <p class="eyebrow text-brand">Dashboard access</p>
+              <h2 class="display mt-1.5 text-2xl font-semibold text-ink">Users and roles</h2>
+              <p class="mt-2 text-sm text-slate-500">Superadmin manages accounts. Admin can operate pipelines but cannot manage users.</p>
+            </div>
+            <button class="button-primary" on:click={openNewUser}><Icon name="plus" size={15} /> Add user</button>
+          </section>
+          <div class="panel overflow-hidden">
+            <div class="grid grid-cols-[1fr_140px_100px] gap-4 border-b border-line bg-slate-50 px-5 py-3 text-[10px] font-bold uppercase tracking-[.14em] text-slate-500">
+              <span>User</span><span>Role</span><span class="text-right">Actions</span>
+            </div>
+            {#if usersLoading}
+              <div class="px-5 py-12 text-center text-sm text-slate-500">Loading users...</div>
+            {:else}
+              <div class="divide-y divide-line">
+                {#each users as user (user.id)}
+                  <div class="grid grid-cols-[1fr_140px_100px] items-center gap-4 px-5 py-4">
+                    <div class="min-w-0">
+                      <p class="truncate text-sm font-semibold text-slate-800">{user.display_name || user.username}</p>
+                      <p class="mt-0.5 text-[11px] text-slate-500">@{user.username}</p>
+                    </div>
+                    <span class={`w-fit rounded-full px-2.5 py-1 text-[10px] font-bold capitalize ${user.role === 'superadmin' ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>{user.role}</span>
+                    <div class="flex justify-end gap-1">
+                      <button class="icon-button" title="Edit user" on:click={() => openEditUser(user)}><Icon name="edit" size={15} /></button>
+                      {#if user.id !== currentUser?.id}
+                        <button class="icon-button icon-button-danger" title="Delete user" on:click={() => requestDelete('user', user)}><Icon name="trash" size={15} /></button>
+                      {/if}
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
         {:else}
           <section class="mb-6 flex flex-wrap items-end justify-between gap-4">
             <div>
@@ -1591,8 +1848,8 @@
   </main>
 </div>
 
-<nav class="fixed bottom-3 left-3 right-3 z-40 grid grid-cols-4 rounded-lg border border-white/10 bg-navy/95 p-1.5 shadow-2xl backdrop-blur-xl lg:hidden" aria-label="Mobile navigation">
-  {#each nav as item}
+<nav class="fixed bottom-3 left-3 right-3 z-40 grid rounded-lg border border-white/10 bg-navy/95 p-1.5 shadow-2xl backdrop-blur-xl lg:hidden" style={`grid-template-columns: repeat(${visibleNav.length}, minmax(0, 1fr))`} aria-label="Mobile navigation">
+  {#each visibleNav as item}
     <button class={`flex flex-col items-center gap-1 rounded-xl px-1 py-2 text-[10px] font-medium transition ${page === item.name ? 'bg-white/10 text-white' : 'text-slate-400'}`} on:click={() => goToPage(item.name)}>
       <span class={page === item.name ? 'text-brand' : ''}><Icon name={item.icon} size={18} /></span>
       {item.name}
@@ -1823,6 +2080,47 @@
   </Modal>
 {/if}
 
+{#if showUserModal}
+  <Modal title={editingUser ? 'Edit user' : 'Add user'} eyebrow="Dashboard access" close={() => !userSaving && (showUserModal = false)}>
+    <label class="field-label">Username<input bind:value={userForm.username} disabled={userSaving} placeholder="operator" autocomplete="off" /></label>
+    <label class="field-label">Display name<input bind:value={userForm.display_name} disabled={userSaving} placeholder="Operations Admin" /></label>
+    <label class="field-label">
+      Role
+      <select bind:value={userForm.role} disabled={userSaving}>
+        <option value="admin">Admin</option>
+        <option value="superadmin">Superadmin</option>
+      </select>
+      <span class="field-hint">Superadmin can manage users. Admin can use the integration dashboard.</span>
+    </label>
+    <label class="field-label">
+      {editingUser ? 'New password (optional)' : 'Password'}
+      <input type="password" bind:value={userForm.password} disabled={userSaving} autocomplete="new-password" placeholder="Minimum 12 characters" />
+    </label>
+    {#if userStatus}<div class="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs leading-5 text-rose-700">{userStatus}</div>{/if}
+    <div class="flex justify-end gap-3">
+      <button class="button-secondary" on:click={() => showUserModal = false} disabled={userSaving}>Cancel</button>
+      <button class="button-primary" on:click={saveUser} disabled={userSaving || !userForm.username.trim() || (!editingUser && userForm.password.length < 12)}>
+        {userSaving ? 'Saving...' : editingUser ? 'Save changes' : 'Create user'}
+      </button>
+    </div>
+  </Modal>
+{/if}
+
+{#if showPasswordModal}
+  <Modal title="Change password" eyebrow="Account security" close={() => !passwordSaving && (showPasswordModal = false)}>
+    <label class="field-label">Current password<input type="password" bind:value={passwordForm.current_password} autocomplete="current-password" /></label>
+    <label class="field-label">New password<input type="password" bind:value={passwordForm.new_password} autocomplete="new-password" /><span class="field-hint">Minimum 12 characters. Other active sessions will be revoked.</span></label>
+    <label class="field-label">Confirm new password<input type="password" bind:value={passwordForm.confirm_password} autocomplete="new-password" /></label>
+    {#if passwordStatus}<div class="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs leading-5 text-rose-700">{passwordStatus}</div>{/if}
+    <div class="flex justify-end gap-3">
+      <button class="button-secondary" on:click={() => showPasswordModal = false} disabled={passwordSaving}>Cancel</button>
+      <button class="button-primary" on:click={savePassword} disabled={passwordSaving || passwordForm.new_password.length < 12 || !passwordForm.current_password}>
+        {passwordSaving ? 'Updating...' : 'Update password'}
+      </button>
+    </div>
+  </Modal>
+{/if}
+
 {#if stopTarget}
   <ConfirmDialog
     title="Stop running pipeline?"
@@ -1851,4 +2149,5 @@
     <span class="grid h-6 w-6 place-items-center rounded-full bg-emerald-400/15 text-emerald-300"><Icon name="check" size={14} /></span>
     {toast}
   </div>
+{/if}
 {/if}

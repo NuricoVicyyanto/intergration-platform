@@ -31,17 +31,38 @@ docker compose exec -T ui wget -q -O /dev/null http://127.0.0.1/ ||
   fail "UI tidak merespons di dalam container"
 
 docker compose exec -T api python - <<'PY'
+import http.cookiejar
 import json
 import os
 import urllib.parse
 import urllib.request
 
+base = "http://127.0.0.1:8080"
+cookies = http.cookiejar.CookieJar()
+opener = urllib.request.build_opener(
+    urllib.request.HTTPCookieProcessor(cookies)
+)
+
+
+def login():
+    username = os.environ.get("CP_SUPERADMIN_USERNAME", "superadmin")
+    password = os.environ.get("CP_SUPERADMIN_PASSWORD", "SuperAdmin!2026-Meltano")
+    request = urllib.request.Request(
+        f"{base}/v1/auth/login",
+        data=json.dumps({"username": username, "password": password}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with opener.open(request, timeout=10):
+        pass
+
 
 def get(path):
-    with urllib.request.urlopen(f"http://127.0.0.1:8080{path}", timeout=10) as response:
+    with opener.open(f"{base}{path}", timeout=10) as response:
         return json.load(response)
 
 
+login()
 tenants = get("/v1/tenants").get("data", [])
 if not tenants:
     raise SystemExit("FAIL: belum ada tenant terdaftar")
