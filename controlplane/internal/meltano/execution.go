@@ -69,6 +69,10 @@ func ParseExecutionLine(raw string) ExecutionLogLine {
 	line.Plugin = firstNonEmpty(stringField(payload, "name"), stringField(payload, "string_id"))
 	line.Stdio = stringField(payload, "stdio")
 	line.Message = firstNonEmpty(stringField(payload, "event"), stringField(payload, "message"), raw)
+	if detail := executionExceptionDetail(payload); detail != "" &&
+		!strings.Contains(line.Message, detail) {
+		line.Message += ": " + detail
+	}
 
 	if metric, ok := payload["metric_info"].(map[string]any); ok {
 		encoded, _ := json.Marshal(metric)
@@ -82,6 +86,58 @@ func ParseExecutionLine(raw string) ExecutionLogLine {
 	line.Stage = detectStage(line.Message)
 	line.RecordCount, line.Stream = parseRecordMetric(line.Message)
 	return line
+}
+
+func executionExceptionDetail(payload map[string]any) string {
+	for _, key := range []string{"exception", "exceptions", "error"} {
+		value, ok := payload[key]
+		if !ok || value == nil {
+			continue
+		}
+		switch typed := value.(type) {
+		case string:
+			if text := strings.TrimSpace(typed); text != "" {
+				return truncateLogDetail(text)
+			}
+		case map[string]any:
+			if detail := exceptionMapDetail(typed); detail != "" {
+				return truncateLogDetail(detail)
+			}
+		case []any:
+			for _, item := range typed {
+				if mapped, ok := item.(map[string]any); ok {
+					if detail := exceptionMapDetail(mapped); detail != "" {
+						return truncateLogDetail(detail)
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func exceptionMapDetail(value map[string]any) string {
+	parts := make([]string, 0, 3)
+	for _, key := range []string{"exc_type", "type", "exc_value", "message", "detail"} {
+		if text := strings.TrimSpace(stringField(value, key)); text != "" {
+			parts = append(parts, text)
+		}
+	}
+	if len(parts) == 0 {
+		encoded, err := json.Marshal(value)
+		if err == nil {
+			return string(encoded)
+		}
+	}
+	return strings.Join(parts, ": ")
+}
+
+func truncateLogDetail(value string) string {
+	const maxDetail = 4000
+	if len(value) <= maxDetail {
+		return value
+	}
+	return value[:maxDetail] + "...[truncated]"
 }
 
 // IsUsefulExecutionLine membuang peringatan dependency yang tidak membantu

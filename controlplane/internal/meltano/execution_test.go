@@ -1,11 +1,28 @@
 package meltano
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/example/controlplane/internal/domain"
 )
+
+func TestParseExecutionLineIncludesExceptionDetail(t *testing.T) {
+	line := ParseExecutionLine(`{
+		"event": "An unhandled error occurred",
+		"name": "tap-postgres",
+		"level": "error",
+		"exception": {
+			"exc_type": "OperationalError",
+			"message": "column type is not supported"
+		}
+	}`)
+	if !strings.Contains(line.Message, "OperationalError") ||
+		!strings.Contains(line.Message, "column type is not supported") {
+		t.Fatalf("message kehilangan detail exception: %q", line.Message)
+	}
+}
 
 func TestSummarizeExecutionLog(t *testing.T) {
 	started := time.Date(2026, 10, 21, 4, 5, 3, 0, time.UTC)
