@@ -113,11 +113,12 @@ aktif supaya rollback dapat dilakukan.
 ## 8. Buat konfigurasi server
 
 ```bash
-cp docker.env.example .env.docker
-chmod 600 .env.docker
+bash controlplane/deploy/deploy.sh
 ```
 
-Isi konfigurasi. Untuk server gunakan:
+Pada run pertama, script membuat `.env.docker` dari template lalu berhenti.
+Isi dua DSN PostgreSQL, kemudian jalankan script yang sama lagi. Untuk server
+gunakan:
 
 ```dotenv
 CP_ALLOW_PLAINTEXT_SECRETS=false
@@ -125,6 +126,10 @@ CP_LOG_LEVEL=info
 CP_BOOTSTRAP_TENANT=acme
 CP_BOOTSTRAP_ENVIRONMENT=dev
 ```
+
+Seluruh 15 connector dipasang secara default. Tambahkan
+`CP_BOOTSTRAP_INSTALL_ALL_CONNECTORS=false` hanya jika server memang dibatasi
+ke dua connector awal.
 
 Secret connection harus memakai `secret_ref`. Nilai secret dapat disediakan
 lewat environment worker untuk tahap awal:

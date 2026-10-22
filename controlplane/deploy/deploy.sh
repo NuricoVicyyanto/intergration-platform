@@ -20,20 +20,29 @@ if ! docker info >/dev/null 2>&1; then
 fi
 
 if [[ ! -f .env.docker ]]; then
-  echo "ERROR: .env.docker belum ada." >&2
-  echo "Jalankan: cp docker.env.example .env.docker" >&2
+  cp docker.env.example .env.docker
+  chmod 600 .env.docker
+  echo "File .env.docker dibuat dari docker.env.example." >&2
+  echo "Isi CP_DATABASE_URL dan CP_SYSTEM_DB_URI, lalu jalankan ulang:" >&2
+  echo "  bash controlplane/deploy/deploy.sh" >&2
+  exit 1
+fi
+
+if grep -q 'CHANGE_ME' .env.docker; then
+  echo "ERROR: .env.docker masih berisi CHANGE_ME." >&2
+  echo "Isi CP_DATABASE_URL dan CP_SYSTEM_DB_URI terlebih dahulu." >&2
   exit 1
 fi
 
 docker compose config --quiet
 
-echo "[1/4] Build image..."
+echo "[1/5] Build image..."
 docker compose build
 
-echo "[2/4] Menjalankan service..."
+echo "[2/5] Menjalankan service..."
 docker compose up -d --remove-orphans
 
-echo "[3/4] Memeriksa provisioning tenant..."
+echo "[3/5] Memeriksa provisioning tenant..."
 provision_id="$(docker compose ps -aq provision)"
 if [[ -z "${provision_id}" ]]; then
   echo "ERROR: container provision tidak ditemukan." >&2
@@ -49,7 +58,7 @@ if [[ "${provision_state}" != "exited" || "${provision_rc}" -ne 0 ]]; then
   exit 1
 fi
 
-echo "[4/4] Menunggu API siap..."
+echo "[4/5] Menunggu API siap..."
 api_ready=false
 for _ in $(seq 1 60); do
   if docker compose exec -T api python -c \
@@ -75,6 +84,9 @@ for service in api worker ui; do
     exit 1
   fi
 done
+
+echo "[5/5] Memeriksa connector dan health..."
+bash "${ROOT_DIR}/controlplane/deploy/check.sh"
 
 echo
 echo "Deployment selesai."

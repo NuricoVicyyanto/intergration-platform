@@ -101,11 +101,12 @@ diprovision. Provisioner juga mendaftarkan tenant tersebut ke API sehingga
 langsung muncul di UI. Pipeline, connection, dan source table tetap dibuat lewat
 UI atau API.
 
-`CP_BOOTSTRAP_INSTALL_ALL_CONNECTORS=true` memasang seluruh 15 connector pada
-katalog aplikasi: PostgreSQL, MySQL, SQL Server, Oracle, MongoDB, REST API, CSV,
-Google Sheets, S3, dan DuckDB. Instalasi pertama membutuhkan waktu serta disk
-lebih besar. Set nilai tersebut ke `false` untuk hanya memasang pasangan
-`CP_BOOTSTRAP_EXTRACTOR` dan `CP_BOOTSTRAP_LOADER`.
+Seluruh 15 connector terpasang secara default, bahkan bila variabel
+`CP_BOOTSTRAP_INSTALL_ALL_CONNECTORS` tidak ditulis: PostgreSQL, MySQL, SQL
+Server, Oracle, MongoDB, REST API, CSV, Google Sheets, S3, dan DuckDB.
+Instalasi pertama membutuhkan waktu serta disk lebih besar. Set nilainya ke
+`false` untuk hanya memasang pasangan `CP_BOOTSTRAP_EXTRACTOR` dan
+`CP_BOOTSTRAP_LOADER`.
 
 ### Pilihan credential untuk uji local
 

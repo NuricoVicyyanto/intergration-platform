@@ -122,6 +122,10 @@ CP_ALLOW_PLAINTEXT_SECRETS=false
 CP_LOG_LEVEL=info
 ```
 
+Seluruh 15 connector dipasang secara default. Baris
+`CP_BOOTSTRAP_INSTALL_ALL_CONNECTORS=true` boleh dihilangkan; set ke `false`
+hanya jika server memang dibatasi ke dua connector awal.
+
 Jika password mengandung karakter khusus, URL-encode password tersebut.
 Jangan commit `.env.docker` karena berisi kredensial.
 

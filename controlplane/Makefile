@@ -1,4 +1,4 @@
-.PHONY: help build test fmt vet run-api run-worker tidy clean
+.PHONY: help build test fmt vet run-api run-worker tidy clean docker-deploy docker-check docker-backup
 
 help:
 	@echo "build      - kompilasi kedua binary ke ./bin"
@@ -7,6 +7,9 @@ help:
 	@echo "vet        - go vet"
 	@echo "run-api    - jalankan control plane API"
 	@echo "run-worker - jalankan worker"
+	@echo "docker-deploy - build dan jalankan seluruh stack Docker"
+	@echo "docker-check  - cek health API, worker, UI, DB, dan connector"
+	@echo "docker-backup - backup database dan volume Meltano"
 	@echo "clean      - hapus ./bin"
 
 build:
@@ -28,6 +31,15 @@ run-api:
 
 run-worker:
 	go run ./cmd/worker
+
+docker-deploy:
+	cd .. && bash controlplane/deploy/deploy.sh
+
+docker-check:
+	cd .. && bash controlplane/deploy/check.sh
+
+docker-backup:
+	cd .. && bash controlplane/deploy/backup.sh
 
 tidy:
 	go mod tidy

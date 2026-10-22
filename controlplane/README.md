@@ -31,12 +31,15 @@ kedua DSN harus menunjuk database eksternal yang sudah dibuat.
 
 ```bash
 # dari root repository
-cp docker.env.example .env.docker
-chmod 600 .env.docker
-# isi CP_DATABASE_URL dan CP_SYSTEM_DB_URI di .env.docker
 bash controlplane/deploy/deploy.sh
 bash controlplane/deploy/check.sh
 ```
+
+Pada run pertama, script membuat `.env.docker` dari template lalu berhenti.
+Isi `CP_DATABASE_URL` dan `CP_SYSTEM_DB_URI`, kemudian jalankan perintah yang
+sama lagi. Semua connector terpasang secara default; set
+`CP_BOOTSTRAP_INSTALL_ALL_CONNECTORS=false` hanya jika memang ingin membatasi
+ke pasangan connector awal.
 
 UI: `http://localhost:3000`
 API: `http://localhost:8080`
@@ -59,10 +62,28 @@ Script operasional:
 
 - [`deploy/deploy.sh`](deploy/deploy.sh) - build, start, menunggu provisioning,
   dan health check
-- [`deploy/check.sh`](deploy/check.sh) - verifikasi API, worker, UI, dan database
+- [`deploy/check.sh`](deploy/check.sh) - verifikasi API, worker, UI, database,
+  dan seluruh connector
 - [`deploy/backup.sh`](deploy/backup.sh) - backup dua database dan dua volume
 - [`deploy/Caddyfile.example`](deploy/Caddyfile.example) - reverse proxy HTTPS
   dengan Basic Auth
+
+Jika `make` tersedia, shortcut-nya adalah `make -C controlplane docker-deploy`,
+`docker-check`, dan `docker-backup`.
+
+## Update developer
+
+Setelah perubahan Docker sudah berada di branch utama:
+
+```bash
+git pull --ff-only
+bash controlplane/deploy/deploy.sh
+bash controlplane/deploy/check.sh
+```
+
+`.env.docker` tidak ditimpa saat update. Nilai default connector penuh berasal
+dari script, sehingga server lama yang belum memiliki
+`CP_BOOTSTRAP_INSTALL_ALL_CONNECTORS` tetap memasang seluruh connector.
 
 > **Pindahkan ke repo sendiri.** Direktori ini berada di dalam checkout Meltano
 > hanya karena itu satu-satunya lokasi yang bisa ditulis saat dibuat. Untuk

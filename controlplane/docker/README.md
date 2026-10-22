@@ -39,8 +39,10 @@ Script siap pakai:
 2. Dari root repository:
 
    ```bash
-   cp docker.env.example .env.docker
+   bash controlplane/deploy/deploy.sh
    ```
+
+   Pada run pertama script membuat `.env.docker`, lalu berhenti.
 
 3. Isi `CP_DATABASE_URL` untuk store control plane dan `CP_SYSTEM_DB_URI` untuk
    system database Meltano. Jika PostgreSQL berjalan di host Docker, gunakan
@@ -66,11 +68,12 @@ menggunakan cache BuildKit.
 
 Service `provision` otomatis membuat tenant pertama dari nilai
 `CP_BOOTSTRAP_TENANT`, `CP_BOOTSTRAP_ENVIRONMENT`,
-`CP_BOOTSTRAP_EXTRACTOR`, dan `CP_BOOTSTRAP_LOADER`. Dengan
-`CP_BOOTSTRAP_INSTALL_ALL_CONNECTORS=true`, seluruh connector katalog dipasang.
-Tenant juga didaftarkan ke API agar langsung muncul di UI. Setelah berhasil,
-marker `.docker-provisioned` disimpan di volume dan instalasi plugin dilewati
-pada `docker compose up` berikutnya; registrasi tenant tetap diverifikasi.
+`CP_BOOTSTRAP_EXTRACTOR`, dan `CP_BOOTSTRAP_LOADER`. Seluruh connector katalog
+dipasang secara default. Set `CP_BOOTSTRAP_INSTALL_ALL_CONNECTORS=false` untuk
+membatasi instalasi ke pasangan connector awal. Tenant juga didaftarkan ke API
+agar langsung muncul di UI. Setelah berhasil, marker `.docker-provisioned`
+disimpan di volume dan instalasi plugin dilewati pada `docker compose up`
+berikutnya; registrasi tenant tetap diverifikasi.
 
 Untuk menambah tenant atau mengganti plugin:
 
