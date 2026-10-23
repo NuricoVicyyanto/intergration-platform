@@ -1575,6 +1575,31 @@ MELTANO_RUN_ID=550e8400-e29b-41d4-a716-446655440000 meltano --environment=dev ru
 
 The `run` command always requires a [Meltano Environment](https://docs.meltano.com/concepts/environments) to be set. The environment name can be provided using the `--environment` flag or with the [`default_environment` setting](https://docs.meltano.com/concepts/environments#default-environments) in your `meltano.yml` file.
 
+## `run-many`
+
+Run independent named jobs concurrently in isolated `meltano run` processes.
+This is useful when multiple pipelines do not depend on each other and would
+otherwise run serially.
+
+```bash
+meltano install
+meltano --environment=prod run-many --workers=3 \
+  customers-sync orders-sync invoices-sync
+```
+
+Each job gets its own state ID suffix by default. The suffix is the job name,
+so jobs using the same extractor/loader pair can run concurrently without
+sharing state. Customize the generated suffix with
+`--state-id-suffix-template` and `{job}`.
+
+`--workers` defaults to `3` and can also be set with
+`MELTANO_RUN_MANY_WORKERS`. Use `--dry-run` to inspect the child commands.
+Plugins should be installed before starting workers so concurrent processes do
+not modify the same plugin environment.
+
+See [Run Pipelines in Parallel Workers](/guide/parallel-workers) for Docker,
+production deployment, state isolation, and troubleshooting guidance.
+
 ## `job`
 
 Use the `job` command to define one or more sequences of tasks. A job can contain a single task or many tasks.

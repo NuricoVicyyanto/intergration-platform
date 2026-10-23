@@ -24,6 +24,11 @@ This image can then be used on any environment running [Docker](https://www.dock
 in the context of your project, without needing to separately manage the installation of
 Meltano, your project's plugins, or any of their dependencies.
 
+For a project that needs concurrent pipeline execution, see
+[Run Pipelines in Parallel Workers](/guide/parallel-workers). The source-build
+Compose setup in this repository includes PostgreSQL metadata storage, plugin
+installation, and a three-worker default.
+
 If you're storing your Meltano project in version control on a
 platform like [GitLab](https://about.gitlab.com) or [GitHub](https://github.com),
 you can set up a CI/CD pipeline to run every time a change is made to your project,

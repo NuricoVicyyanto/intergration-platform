@@ -31,6 +31,7 @@ from meltano.cli import (
     plugin,
     remove,
     run,
+    run_many,
     schedule,
     schema,
     select_entities,
@@ -71,6 +72,7 @@ cli.add_command(select_entities.select)
 cli.add_command(state.meltano_state)
 cli.add_command(upgrade.upgrade)
 cli.add_command(run.run)
+cli.add_command(run_many.run_many)
 cli.add_command(validate.test)
 cli.add_command(job.job)
 

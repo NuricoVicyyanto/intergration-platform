@@ -1,0 +1,43 @@
+# syntax=docker/dockerfile:1.7
+
+ARG PYTHON_VERSION="3.13"
+ARG UV_VERSION="0.13.0"
+
+FROM python:${PYTHON_VERSION}-slim
+
+ARG UV_VERSION
+
+LABEL org.opencontainers.image.source=https://github.com/meltano/meltano
+LABEL org.opencontainers.image.description="Meltano built from the current source checkout"
+LABEL org.opencontainers.image.licenses=MIT
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/venv \
+    PATH="/venv/bin:${PATH}"
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      build-essential \
+      freetds-bin \
+      freetds-dev \
+      git \
+      libkrb5-dev \
+      libssl-dev \
+      tdsodbc \
+      unixodbc \
+      unixodbc-dev && \
+    python -m pip install --no-cache-dir "uv==${UV_VERSION}" && \
+    rm -rf /var/cache/apt/archives /var/lib/apt/lists/*
+
+WORKDIR /opt/meltano-source
+
+COPY pyproject.toml uv.lock README.md ./
+COPY src ./src
+
+RUN uv sync --frozen --no-default-groups --all-extras
+
+WORKDIR /project
+
+ENTRYPOINT ["meltano"]

@@ -1,0 +1,63 @@
+name: meltano-workers
+
+x-worker-image: &worker-image
+  image: ${MELTANO_WORKER_IMAGE:-meltano-workers:local}
+  build:
+    context: .
+    dockerfile: docker/meltano/Dockerfile.source
+    args:
+      PYTHON_VERSION: ${MELTANO_PYTHON_VERSION:-3.13}
+
+x-worker-runtime: &worker-runtime
+  <<: *worker-image
+  init: true
+  working_dir: /project
+  volumes:
+    - "${MELTANO_PROJECT_DIR:?Set MELTANO_PROJECT_DIR in docker/workers.env}:/project"
+    - meltano-runtime:/project/.meltano
+  environment:
+    MELTANO_DATABASE_URI: ${MELTANO_DATABASE_URI:-postgresql+psycopg://meltano:meltano-local@metadata-db:5432/meltano}
+    MELTANO_ENVIRONMENT: ${MELTANO_ENVIRONMENT:-prod}
+    MELTANO_JOBS: ${MELTANO_JOBS:?Set MELTANO_JOBS in docker/workers.env}
+    MELTANO_RUN_MANY_WORKERS: ${MELTANO_RUN_MANY_WORKERS:-3}
+    MELTANO_RUN_MANY_STATE_ID_SUFFIX_TEMPLATE: ${MELTANO_RUN_MANY_STATE_ID_SUFFIX_TEMPLATE:-{job}}
+    PYTHONUNBUFFERED: "1"
+    PYTHONUTF8: "1"
+    NO_COLOR: "1"
+    TERM: dumb
+
+services:
+  metadata-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: meltano
+      POSTGRES_USER: meltano
+      POSTGRES_PASSWORD: ${MELTANO_METADATA_DB_PASSWORD:-meltano-local}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meltano -d meltano"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - meltano-metadata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  workers:
+    <<: *worker-runtime
+    depends_on:
+      metadata-db:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        meltano install
+        exec meltano \
+          --environment "$$MELTANO_ENVIRONMENT" \
+          run-many \
+          --workers "$$MELTANO_RUN_MANY_WORKERS" \
+          $$MELTANO_JOBS
+    restart: "no"
+
+volumes:
+  meltano-runtime:
+  meltano-metadata:
